@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { fetchOpportunities, EspoConfig } from '../services/espoClient.js';
+import { fetchOpportunities, fetchContacts, EspoConfig } from '../services/espoClient.js';
 
 const router = Router();
 
@@ -14,6 +14,29 @@ function getEspoConfig(): EspoConfig {
 
   return { baseUrl, username, password };
 }
+
+router.get('/crm/contacts', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const config = getEspoConfig();
+    const contacts = await fetchContacts(config);
+
+    const stages: Record<string, number> = {};
+    for (const contact of contacts.list) {
+      const stage = contact.cStatus || 'Unknown';
+      stages[stage] = (stages[stage] || 0) + 1;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        total: contacts.total,
+        stages,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/crm/pipeline', async (req: Request, res: Response, next: NextFunction) => {
   try {

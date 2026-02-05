@@ -30,6 +30,95 @@ describe('CRM API', () => {
     process.env = originalEnv;
   });
 
+  describe('GET /api/crm/contacts', () => {
+    it('returns contacts grouped by cStatus', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          total: 5,
+          list: [
+            { id: '1', name: 'Contact A', cStatus: 'Reconnect' },
+            { id: '2', name: 'Contact B', cStatus: 'Reconnect' },
+            { id: '3', name: 'Contact C', cStatus: 'Archive' },
+            { id: '4', name: 'Contact D', cStatus: 'Follow-Up' },
+            { id: '5', name: 'Contact E', cStatus: 'Engaged' },
+          ],
+        }),
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.total).toBe(5);
+      expect(response.body.data.stages).toEqual({
+        'Reconnect': 2,
+        'Archive': 1,
+        'Follow-Up': 1,
+        'Engaged': 1,
+      });
+    });
+
+    it('handles contacts without cStatus as Unknown', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          total: 2,
+          list: [
+            { id: '1', name: 'Contact A', cStatus: null },
+            { id: '2', name: 'Contact B' },
+          ],
+        }),
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.body.data.stages).toEqual({ 'Unknown': 2 });
+    });
+
+    it('handles empty contact list', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ total: 0, list: [] }),
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.body.data.total).toBe(0);
+      expect(response.body.data.stages).toEqual({});
+    });
+
+    it('uses correct API endpoint for Contacts', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ total: 0, list: [] }),
+      } as Response);
+
+      await request(app).get('/api/crm/contacts');
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:8080/api/v1/Contact',
+        expect.objectContaining({
+          headers: {
+            Authorization: `Basic ${Buffer.from('testuser:testpass').toString('base64')}`,
+          },
+        })
+      );
+    });
+
+    it('returns 500 when EspoCRM returns error', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.status).toBe(500);
+      expect(response.body.success).toBe(false);
+    });
+  });
+
   describe('GET /api/crm/pipeline', () => {
     it('returns pipeline data grouped by stage', async () => {
       mockFetch.mockResolvedValueOnce({

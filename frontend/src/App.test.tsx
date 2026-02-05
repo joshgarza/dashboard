@@ -45,6 +45,13 @@ describe('App', () => {
           }),
         } as Response);
       }
+      // CRM pipeline/contacts mock
+      if (url.includes('/crm/pipeline') || url.includes('/crm/contacts')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: { total: 0, stages: {} } }),
+        } as Response);
+      }
       // Backend API mock (devices endpoint)
       return Promise.resolve({
         ok: true,

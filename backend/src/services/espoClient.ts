@@ -27,6 +27,19 @@ interface Account {
   type?: string;
 }
 
+interface Contact {
+  id: string;
+  name: string;
+  cStatus?: string;
+  cFollowUp?: string;
+  cRelationshipStrength?: string;
+  cInfluence?: string;
+  emailAddress?: string;
+  phoneNumber?: string;
+  accountId?: string;
+  accountName?: string;
+}
+
 export async function fetchOpportunities(config: EspoConfig): Promise<EspoListResponse<Opportunity>> {
   const auth = Buffer.from(`${config.username}:${config.password}`).toString('base64');
   const response = await fetch(`${config.baseUrl}/api/v1/Opportunity`, {
@@ -49,4 +62,15 @@ export async function fetchAccounts(config: EspoConfig): Promise<EspoListRespons
   return response.json();
 }
 
-export type { EspoConfig, Opportunity, Account };
+export async function fetchContacts(config: EspoConfig): Promise<EspoListResponse<Contact>> {
+  const auth = Buffer.from(`${config.username}:${config.password}`).toString('base64');
+  const response = await fetch(`${config.baseUrl}/api/v1/Contact`, {
+    headers: { Authorization: `Basic ${auth}` },
+  });
+  if (!response.ok) {
+    throw new Error(`EspoCRM API error: ${response.status}`);
+  }
+  return response.json();
+}
+
+export type { EspoConfig, Opportunity, Account, Contact };

@@ -5,6 +5,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { WeatherTime } from '@/modules/WeatherTime';
 import { SystemStats } from '@/modules/SystemStats';
 import { JobPipeline } from '@/modules/JobPipeline';
+import { Contacts } from '@/modules/Contacts';
 import type { DashboardModule } from '@/types/module';
 
 const modules: DashboardModule[] = [
@@ -24,6 +25,12 @@ const modules: DashboardModule[] = [
     id: 'job-pipeline',
     title: 'Job Pipeline',
     component: JobPipeline,
+    refreshInterval: 300000,
+  },
+  {
+    id: 'contacts',
+    title: 'Contacts',
+    component: Contacts,
     refreshInterval: 300000,
   },
 ];
