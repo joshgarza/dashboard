@@ -52,6 +52,16 @@ describe('App', () => {
           json: () => Promise.resolve({ success: true, data: { total: 0, stages: {} } }),
         } as Response);
       }
+      // Obsidian weekly-todos mock
+      if (url.includes('/obsidian/weekly-todos')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: { noteTitle: '2026 Week 05', completed: 0, total: 0, weekOf: 'February 02, 2026' },
+          }),
+        } as Response);
+      }
       // Backend API mock (devices endpoint)
       return Promise.resolve({
         ok: true,

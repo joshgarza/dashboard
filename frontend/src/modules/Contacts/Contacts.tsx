@@ -4,6 +4,17 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { config } from '@/config';
 
+// 1. Define the specific order as a constant
+const STAGE_ORDER = [
+  'Cold',
+  'Warm',
+  'Hot',
+  'Meeting Scheduled',
+  'Follow-Up',
+  'Post-Meeting',
+  'Archive'
+] as const;
+
 interface ContactsData {
   total: number;
   stages: Record<string, number>;
@@ -45,10 +56,7 @@ export function Contacts() {
     );
   }
 
-  if (error) {
-    return <div className="text-destructive text-sm">{error}</div>;
-  }
-
+  if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!data) return null;
 
   return (
@@ -59,15 +67,21 @@ export function Contacts() {
       </div>
 
       <div className="space-y-3">
-        {Object.entries(data.stages).map(([stage, count]) => (
-          <div key={stage} className="space-y-1">
-            <div className="flex justify-between text-sm">
-              <span>{stage}</span>
-              <span className="text-muted-foreground">{count}</span>
+        {/* 2. Map over the ordered array instead of Object.entries */}
+        {STAGE_ORDER.map((stage) => {
+          const count = data.stages[stage] ?? 0; // Default to 0 if missing from API
+          const percentage = data.total > 0 ? (count / data.total) * 100 : 0;
+
+          return (
+            <div key={stage} className="space-y-1">
+              <div className="flex justify-between text-sm">
+                <span>{stage}</span>
+                <span className="text-muted-foreground">{count}</span>
+              </div>
+              <Progress value={percentage} className="h-2" />
             </div>
-            <Progress value={(count / data.total) * 100} className="h-2" />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

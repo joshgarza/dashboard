@@ -6,7 +6,23 @@ import { WeatherTime } from '@/modules/WeatherTime';
 import { SystemStats } from '@/modules/SystemStats';
 import { JobPipeline } from '@/modules/JobPipeline';
 import { Contacts } from '@/modules/Contacts';
+import { WeeklyTodos } from '@/modules/WeeklyTodos';
 import type { DashboardModule } from '@/types/module';
+
+function getISOWeek(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+function getCurrentWeekTitle(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const week = getISOWeek(now);
+  return `Weekly Todos - ${year} Week ${String(week).padStart(2, '0')}`;
+}
 
 const modules: DashboardModule[] = [
   {
@@ -32,6 +48,12 @@ const modules: DashboardModule[] = [
     title: 'Contacts',
     component: Contacts,
     refreshInterval: 300000,
+  },
+  {
+    id: 'weekly-todos',
+    title: getCurrentWeekTitle(),
+    component: WeeklyTodos,
+    refreshInterval: 60000,
   },
 ];
 

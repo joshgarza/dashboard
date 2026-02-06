@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { devicesRouter } from './routes/devices.js';
 import { crmRouter } from './routes/crm.js';
+import { obsidianRouter } from './routes/obsidian.js';
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api', devicesRouter);
 app.use('/api', crmRouter);
+app.use('/api', obsidianRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
