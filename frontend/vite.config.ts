@@ -6,6 +6,15 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    host: '0.0.0.0',
+    watch: {
+      usePolling: true,
+    },
+    proxy: {
+      '/api': 'http://backend:3001',
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
