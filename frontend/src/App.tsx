@@ -7,6 +7,7 @@ import { SystemStats } from '@/modules/SystemStats';
 import { JobPipeline } from '@/modules/JobPipeline';
 import { Contacts } from '@/modules/Contacts';
 import { WeeklyTodos } from '@/modules/WeeklyTodos';
+import { TodaySchedule } from '@/modules/TodaySchedule';
 import type { DashboardModule } from '@/types/module';
 
 function getISOWeek(date: Date): number {
@@ -29,6 +30,12 @@ const modules: DashboardModule[] = [
     id: 'weather-time',
     title: 'Weather & Time',
     component: WeatherTime,
+    refreshInterval: 60000,
+  },
+  {
+    id: 'today-schedule',
+    title: "Today's Schedule",
+    component: TodaySchedule,
     refreshInterval: 60000,
   },
   {
