@@ -42,7 +42,11 @@ export async function getTodayEvents(
   const offset = `${sign}${String(diffHours).padStart(2, '0')}:${String(diffMins).padStart(2, '0')}`;
 
   const timeMin = `${todayStr}T00:00:00${offset}`;
-  const timeMax = `${todayStr}T23:59:59${offset}`;
+  // timeMax is exclusive in the Google Calendar API, so use midnight of the next day
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone });
+  const timeMax = `${tomorrowStr}T00:00:00${offset}`;
 
   const params = new URLSearchParams({
     key: apiKey,
