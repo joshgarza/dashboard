@@ -1,6 +1,7 @@
 interface CalendarEvent {
   status: string;
   summary?: string;
+  eventType?: string;
   start: {
     dateTime?: string;
     date?: string;
@@ -21,6 +22,7 @@ export interface CalendarEntry {
   title: string;
   isAllDay: boolean;
   startHour?: number;
+  day: 'today' | 'tomorrow';
 }
 
 export interface CalendarResponse {
@@ -30,7 +32,7 @@ export interface CalendarResponse {
 
 export async function getTodayEvents(
   apiKey: string,
-  calendarId: string
+  calendarIds: string[]
 ): Promise<CalendarResponse> {
   // Use the calendar's timezone for day boundaries so the container's
   // UTC clock doesn't shift which "today" we query for.
@@ -48,30 +50,36 @@ export async function getTodayEvents(
   const offset = `${sign}${String(diffHours).padStart(2, '0')}:${String(diffMins).padStart(2, '0')}`;
 
   const timeMin = `${todayStr}T00:00:00${offset}`;
-  // timeMax is exclusive in the Google Calendar API, so use midnight of the next day
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowStr = tomorrow.toLocaleDateString('en-CA', { timeZone });
-  const timeMax = `${tomorrowStr}T00:00:00${offset}`;
+  // Fetch up to 24 hours from now (plus today's past events for the history toggle)
+  const end = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const endStr = end.toLocaleDateString('en-CA', { timeZone });
+  const endTime = end.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone });
+  const timeMax = `${endStr}T${endTime}:00${offset}`;
 
-  const params = new URLSearchParams({
-    key: apiKey,
-    timeMin,
-    timeMax,
-    singleEvents: 'true',
-    orderBy: 'startTime',
-  });
+  // Fetch events from all calendars in parallel
+  const allEvents = await Promise.all(calendarIds.map(async (calendarId) => {
+    const params = new URLSearchParams({
+      key: apiKey,
+      timeMin,
+      timeMax,
+      singleEvents: 'true',
+      orderBy: 'startTime',
+    });
 
-  const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params}`;
-  const response = await fetch(url);
+    const url = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params}`;
+    const response = await fetch(url);
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Google Calendar API error (${response.status}): ${text}`);
-  }
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`Google Calendar API error for ${calendarId} (${response.status}): ${text}`);
+      return [];
+    }
 
-  const data: CalendarApiResponse = await response.json();
-  const events = (data.items ?? []).filter((e) => e.status !== 'cancelled');
+    const data: CalendarApiResponse = await response.json();
+    return (data.items ?? []).filter((e) => e.status !== 'cancelled' && e.eventType !== 'workingLocation');
+  }));
+
+  const events = allEvents.flat();
 
   const entries: CalendarEntry[] = events.map((event) => {
     const isAllDay = !event.start.dateTime;
@@ -90,19 +98,26 @@ export async function getTodayEvents(
       ? parseInt(new Date(event.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }), 10)
       : undefined;
 
+    const eventDate = event.start.dateTime
+      ? new Date(event.start.dateTime).toLocaleDateString('en-CA', { timeZone })
+      : event.start.date;
+    const day: 'today' | 'tomorrow' = eventDate === todayStr ? 'today' : 'tomorrow';
+
     return {
       time,
       title: event.summary ?? '(No title)',
       isAllDay,
       startHour,
+      day,
     };
   });
 
-  // Sort all-day events to the top
+  // Sort: all-day first, then by start time
   entries.sort((a, b) => {
     if (a.isAllDay && !b.isAllDay) return -1;
     if (!a.isAllDay && b.isAllDay) return 1;
-    return 0;
+    if (a.day !== b.day) return a.day === 'today' ? -1 : 1;
+    return (a.startHour ?? 0) - (b.startHour ?? 0);
   });
 
   const currentHour = parseInt(new Date().toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }), 10);

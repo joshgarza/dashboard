@@ -6,9 +6,9 @@ const router = Router();
 router.get('/calendar/today', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const apiKey = process.env.GOOGLE_CALENDAR_API_KEY;
-    const calendarId = process.env.GOOGLE_CALENDAR_ID;
+    const calendarIdStr = process.env.GOOGLE_CALENDAR_ID;
 
-    if (!apiKey || !calendarId) {
+    if (!apiKey || !calendarIdStr) {
       res.status(500).json({
         success: false,
         error: 'Google Calendar API key or Calendar ID not configured',
@@ -16,7 +16,8 @@ router.get('/calendar/today', async (req: Request, res: Response, next: NextFunc
       return;
     }
 
-    const result = await getTodayEvents(apiKey, calendarId);
+    const calendarIds = calendarIdStr.split(',').map(id => id.trim()).filter(Boolean);
+    const result = await getTodayEvents(apiKey, calendarIds);
     res.json({
       success: true,
       data: result.events,

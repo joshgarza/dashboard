@@ -34,7 +34,7 @@ const modules: DashboardModule[] = [
   },
   {
     id: 'today-schedule',
-    title: "Today's Schedule",
+    title: "The Schedule",
     component: TodaySchedule,
     refreshInterval: 60000,
   },
