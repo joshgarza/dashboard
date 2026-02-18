@@ -20,12 +20,18 @@ export interface CalendarEntry {
   time: string;
   title: string;
   isAllDay: boolean;
+  startHour?: number;
+}
+
+export interface CalendarResponse {
+  events: CalendarEntry[];
+  currentHour: number;
 }
 
 export async function getTodayEvents(
   apiKey: string,
   calendarId: string
-): Promise<CalendarEntry[]> {
+): Promise<CalendarResponse> {
   // Use the calendar's timezone for day boundaries so the container's
   // UTC clock doesn't shift which "today" we query for.
   const timeZone = process.env.TZ || 'America/Los_Angeles';
@@ -80,10 +86,15 @@ export async function getTodayEvents(
       });
     }
 
+    const startHour = !isAllDay && event.start.dateTime
+      ? parseInt(new Date(event.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }), 10)
+      : undefined;
+
     return {
       time,
       title: event.summary ?? '(No title)',
       isAllDay,
+      startHour,
     };
   });
 
@@ -94,5 +105,7 @@ export async function getTodayEvents(
     return 0;
   });
 
-  return entries;
+  const currentHour = parseInt(new Date().toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }), 10);
+
+  return { events: entries, currentHour };
 }
