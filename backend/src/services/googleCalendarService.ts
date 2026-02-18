@@ -23,10 +23,15 @@ export interface CalendarEntry {
   startHour?: number;
 }
 
+export interface CalendarResponse {
+  events: CalendarEntry[];
+  currentHour: number;
+}
+
 export async function getTodayEvents(
   apiKey: string,
   calendarId: string
-): Promise<CalendarEntry[]> {
+): Promise<CalendarResponse> {
   // Use the calendar's timezone for day boundaries so the container's
   // UTC clock doesn't shift which "today" we query for.
   const timeZone = process.env.TZ || 'America/Los_Angeles';
@@ -100,5 +105,7 @@ export async function getTodayEvents(
     return 0;
   });
 
-  return entries;
+  const currentHour = parseInt(new Date().toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }), 10);
+
+  return { events: entries, currentHour };
 }

@@ -15,7 +15,7 @@ interface Section {
   events: CalendarEntry[];
 }
 
-function groupBySection(events: CalendarEntry[]): Section[] {
+function groupBySection(events: CalendarEntry[], currentHour: number): Section[] {
   const allDay: CalendarEntry[] = [];
   const morning: CalendarEntry[] = [];
   const workday: CalendarEntry[] = [];
@@ -33,7 +33,6 @@ function groupBySection(events: CalendarEntry[]): Section[] {
     }
   }
 
-  const currentHour = new Date().getHours();
   const currentBlock = currentHour < 9 ? 'morning' : currentHour < 17 ? 'workday' : 'evening';
 
   const sections: Section[] = [];
@@ -46,6 +45,7 @@ function groupBySection(events: CalendarEntry[]): Section[] {
 
 export function TodaySchedule() {
   const [events, setEvents] = useState<CalendarEntry[]>([]);
+  const [currentHour, setCurrentHour] = useState(new Date().getHours());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -56,6 +56,7 @@ export function TodaySchedule() {
       .then(json => {
         if (json.success) {
           setEvents(json.data);
+          if (json.currentHour != null) setCurrentHour(json.currentHour);
         } else {
           const errorMsg = typeof json.error === 'object' ? json.error?.message : json.error;
           setError(errorMsg || 'Failed to load schedule');
@@ -91,13 +92,13 @@ export function TodaySchedule() {
     );
   }
 
-  const sections = groupBySection(events);
+  const sections = groupBySection(events, currentHour);
 
   return (
     <div className="space-y-3">
       <button
         onClick={() => setShowAll(!showAll)}
-        className="flex items-center gap-2 hover:text-foreground transition-colors"
+        className="flex items-center gap-2 cursor-pointer hover:text-foreground transition-colors"
       >
         <Clock className="h-4 w-4 text-muted-foreground" />
         <span className="text-sm text-muted-foreground">

@@ -16,10 +16,11 @@ router.get('/calendar/today', async (req: Request, res: Response, next: NextFunc
       return;
     }
 
-    const events = await getTodayEvents(apiKey, calendarId);
+    const result = await getTodayEvents(apiKey, calendarId);
     res.json({
       success: true,
-      data: events,
+      data: result.events,
+      currentHour: result.currentHour,
     });
   } catch (err) {
     next(err);
