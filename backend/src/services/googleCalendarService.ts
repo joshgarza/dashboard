@@ -20,6 +20,7 @@ export interface CalendarEntry {
   time: string;
   title: string;
   isAllDay: boolean;
+  startHour?: number;
 }
 
 export async function getTodayEvents(
@@ -80,10 +81,15 @@ export async function getTodayEvents(
       });
     }
 
+    const startHour = !isAllDay && event.start.dateTime
+      ? parseInt(new Date(event.start.dateTime).toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }), 10)
+      : undefined;
+
     return {
       time,
       title: event.summary ?? '(No title)',
       isAllDay,
+      startHour,
     };
   });
 
