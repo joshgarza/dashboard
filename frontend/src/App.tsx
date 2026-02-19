@@ -1,3 +1,4 @@
+import { Routes, Route, Link, useLocation } from 'react-router-dom';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Dashboard } from '@/components/Dashboard';
@@ -66,24 +67,45 @@ const modules: DashboardModule[] = [
 ];
 
 function App() {
+  const location = useLocation();
+
   return (
     <ThemeProvider>
       <div className="min-h-screen bg-background">
         <header className="border-b">
           <div className="container mx-auto px-4 py-3 flex items-center justify-between">
-            <h1 className="text-xl font-semibold">Dashboard</h1>
+            <nav className="flex items-center gap-4">
+              <Link
+                to="/"
+                className={`text-xl font-semibold hover:text-foreground/80 transition-colors ${location.pathname === '/' ? 'text-foreground' : 'text-muted-foreground'}`}
+              >
+                Dashboard
+              </Link>
+              <Link
+                to="/research"
+                className={`text-xl font-semibold hover:text-foreground/80 transition-colors ${location.pathname === '/research' ? 'text-foreground' : 'text-muted-foreground'}`}
+              >
+                Research
+              </Link>
+            </nav>
             <ThemeToggle />
           </div>
         </header>
         <main className="container mx-auto">
-          <ErrorBoundary>
-            <Dashboard modules={modules} />
-          </ErrorBoundary>
-          <div className="px-4 pb-4">
-            <ErrorBoundary>
-              <ResearchChat />
-            </ErrorBoundary>
-          </div>
+          <Routes>
+            <Route path="/" element={
+              <ErrorBoundary>
+                <Dashboard modules={modules} />
+              </ErrorBoundary>
+            } />
+            <Route path="/research" element={
+              <div className="px-4 pb-4">
+                <ErrorBoundary>
+                  <ResearchChat />
+                </ErrorBoundary>
+              </div>
+            } />
+          </Routes>
         </main>
       </div>
     </ThemeProvider>
