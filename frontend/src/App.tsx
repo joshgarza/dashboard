@@ -71,7 +71,7 @@ function App() {
 
   return (
     <ThemeProvider>
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen bg-background flex flex-col">
         <header className="border-b">
           <div className="container mx-auto px-4 py-3 flex items-center justify-between">
             <nav className="flex items-center gap-4">
@@ -91,7 +91,7 @@ function App() {
             <ThemeToggle />
           </div>
         </header>
-        <main className="container mx-auto">
+        <main className="container mx-auto flex-1 flex flex-col">
           <Routes>
             <Route path="/" element={
               <ErrorBoundary>
@@ -99,7 +99,7 @@ function App() {
               </ErrorBoundary>
             } />
             <Route path="/research" element={
-              <div className="px-4 pb-4">
+              <div className="px-4 py-4 flex-1 flex flex-col">
                 <ErrorBoundary>
                   <ResearchChat />
                 </ErrorBoundary>

@@ -10,7 +10,7 @@ export function ResearchChat() {
   const [activeTab, setActiveTab] = useState<Tab>('chat');
 
   return (
-    <Card>
+    <Card className="flex-1 flex flex-col">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Research Assistant</CardTitle>
@@ -32,7 +32,7 @@ export function ResearchChat() {
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1 flex flex-col overflow-hidden">
         {activeTab === 'chat' ? <ChatView /> : <EnqueueForm />}
       </CardContent>
     </Card>

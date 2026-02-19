@@ -146,7 +146,7 @@ export function ChatView() {
   const principleFiles = files.filter(f => f.type === 'principles');
 
   return (
-    <div className="space-y-3">
+    <div className="flex-1 flex flex-col gap-3">
       {filesLoading ? (
         <Skeleton className="h-8 w-full" />
       ) : filesError ? (
@@ -186,7 +186,7 @@ export function ChatView() {
         </div>
       )}
 
-      <div className="rounded-md border bg-muted/30 overflow-y-auto max-h-[350px] min-h-[120px] p-3 space-y-2">
+      <div className="rounded-md border bg-muted/30 overflow-y-auto flex-1 min-h-0 p-3 space-y-2">
         {messages.length === 0 ? (
           <div className="text-sm text-muted-foreground text-center py-8">
             Ask a question about your research...
