@@ -8,6 +8,7 @@ import { JobPipeline } from '@/modules/JobPipeline';
 import { Contacts } from '@/modules/Contacts';
 import { WeeklyTodos } from '@/modules/WeeklyTodos';
 import { TodaySchedule } from '@/modules/TodaySchedule';
+import { ResearchChat } from '@/modules/ResearchChat';
 import type { DashboardModule } from '@/types/module';
 
 function getISOWeek(date: Date): number {
@@ -78,6 +79,11 @@ function App() {
           <ErrorBoundary>
             <Dashboard modules={modules} />
           </ErrorBoundary>
+          <div className="px-4 pb-4">
+            <ErrorBoundary>
+              <ResearchChat />
+            </ErrorBoundary>
+          </div>
         </main>
       </div>
     </ThemeProvider>

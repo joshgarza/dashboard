@@ -5,6 +5,9 @@ services:
       - ./backend:/app
       - /app/node_modules
       - /mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault:/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault:ro
+      - /home/josh/coding/claude/research:/home/josh/coding/claude/research
+      - /home/josh/.claude:/root/.claude
+      - /home/josh/.claude.json:/root/.claude.json
     env_file:
       - ./backend/.env
     restart: unless-stopped

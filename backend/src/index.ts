@@ -6,6 +6,7 @@ import { devicesRouter } from './routes/devices.js';
 import { crmRouter } from './routes/crm.js';
 import { obsidianRouter } from './routes/obsidian.js';
 import { calendarRouter } from './routes/calendar.js';
+import { researchRouter } from './routes/research.js';
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.use('/api', devicesRouter);
 app.use('/api', crmRouter);
 app.use('/api', obsidianRouter);
 app.use('/api', calendarRouter);
+app.use('/api', researchRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
