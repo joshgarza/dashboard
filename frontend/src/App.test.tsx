@@ -1,4 +1,9 @@
 import { jest } from '@jest/globals';
+// @ts-expect-error - polyfill TextEncoder for jsdom + react-router
+globalThis.TextEncoder ??= class { encode(s: string) { return new Uint8Array([...s].map(c => c.charCodeAt(0))); } };
+// @ts-expect-error - polyfill TextDecoder for jsdom + react-router
+globalThis.TextDecoder ??= class { decode(a: Uint8Array) { return String.fromCharCode(...a); } };
+
 import { render, screen, waitFor, cleanup } from '@testing-library/react';
 import { act } from 'react';
 
@@ -10,6 +15,7 @@ jest.unstable_mockModule('@/config', () => ({
 }));
 
 const { default: App } = await import('./App');
+const { MemoryRouter } = await import('react-router-dom');
 
 const mockMatchMedia = (matches: boolean) => {
   Object.defineProperty(window, 'matchMedia', {
@@ -52,13 +58,13 @@ describe('App', () => {
           json: () => Promise.resolve({ success: true, data: { total: 0, stages: {} } }),
         } as Response);
       }
-      // Obsidian weekly-todos mock
-      if (url.includes('/obsidian/weekly-todos')) {
+      // Weekly review status mock
+      if (url.includes('/weekly-review/status')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
             success: true,
-            data: { noteTitle: '2026 Week 05', completed: 0, total: 0, weekOf: 'February 02, 2026' },
+            data: { needed: true, week: '2026-W08' },
           }),
         } as Response);
       }
@@ -80,7 +86,7 @@ describe('App', () => {
   });
 
   it('renders the dashboard header', async () => {
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
     // Wait for SystemStats to finish loading (shows "No devices registered" when empty)
     await waitFor(() => {
@@ -89,7 +95,7 @@ describe('App', () => {
   });
 
   it('renders the theme toggle button', async () => {
-    render(<App />);
+    render(<MemoryRouter><App /></MemoryRouter>);
     expect(screen.getByRole('button', { name: /switch to dark mode/i })).toBeInTheDocument();
     // Wait for SystemStats to finish loading
     await waitFor(() => {

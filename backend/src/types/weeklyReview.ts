@@ -1,0 +1,56 @@
+export interface DailyTask {
+  text: string;
+  source: string;       // original markdown line from weekly note
+  completed: boolean;
+}
+
+export interface DailyPlan {
+  focus: string;
+  tasks: DailyTask[];
+}
+
+export interface WeeklyPlan {
+  week: string;
+  interviewedAt: string;
+  weeklyGoals: string[];
+  days: Record<string, DailyPlan>;
+  unscheduled: string[];
+  dropped: string[];
+}
+
+export interface LearningProfile {
+  energy_patterns: {
+    notes: string;
+  };
+  work_preferences: {
+    max_daily_tasks: number;
+    prefers_deep_work_mornings: boolean;
+  };
+  completion_patterns: {
+    avg_weekly_completion: number;
+    commonly_deferred: string[];
+    commonly_completed_first: string[];
+  };
+  review_history: Array<{
+    week: string;
+    planned: number;
+    completed: number;
+    notes: string;
+  }>;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface InterviewStatus {
+  needed: boolean;
+  week: string;
+}
+
+export interface WeeklyContext {
+  currentTodos: string;
+  previousWeekSummary: string;
+  profile: string;
+}

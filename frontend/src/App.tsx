@@ -7,25 +7,11 @@ import { WeatherTime } from '@/modules/WeatherTime';
 import { SystemStats } from '@/modules/SystemStats';
 import { JobPipeline } from '@/modules/JobPipeline';
 import { Contacts } from '@/modules/Contacts';
-import { WeeklyTodos } from '@/modules/WeeklyTodos';
+import { TodayTodos } from '@/modules/TodayTodos';
 import { TodaySchedule } from '@/modules/TodaySchedule';
 import { ResearchChat } from '@/modules/ResearchChat';
+import { WeeklyReview } from '@/modules/WeeklyReview';
 import type { DashboardModule } from '@/types/module';
-
-function getISOWeek(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-}
-
-function getCurrentWeekTitle(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const week = getISOWeek(now);
-  return `Weekly Todos - ${year} Week ${String(week).padStart(2, '0')}`;
-}
 
 const modules: DashboardModule[] = [
   {
@@ -59,9 +45,9 @@ const modules: DashboardModule[] = [
     refreshInterval: 300000,
   },
   {
-    id: 'weekly-todos',
-    title: getCurrentWeekTitle(),
-    component: WeeklyTodos,
+    id: 'today-todos',
+    title: "Today's Plan",
+    component: TodayTodos,
     refreshInterval: 60000,
   },
 ];
@@ -87,6 +73,12 @@ function App() {
               >
                 Research
               </Link>
+              <Link
+                to="/weekly-review"
+                className={`text-xl font-semibold hover:text-foreground/80 transition-colors ${location.pathname === '/weekly-review' ? 'text-foreground' : 'text-muted-foreground'}`}
+              >
+                Weekly Review
+              </Link>
             </nav>
             <ThemeToggle />
           </div>
@@ -102,6 +94,13 @@ function App() {
               <div className="px-4 py-4 flex-1 flex flex-col">
                 <ErrorBoundary>
                   <ResearchChat />
+                </ErrorBoundary>
+              </div>
+            } />
+            <Route path="/weekly-review" element={
+              <div className="px-4 py-4 flex-1 flex flex-col">
+                <ErrorBoundary>
+                  <WeeklyReview />
                 </ErrorBoundary>
               </div>
             } />
