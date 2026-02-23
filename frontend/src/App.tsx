@@ -27,6 +27,12 @@ const modules: DashboardModule[] = [
     refreshInterval: 60000,
   },
   {
+    id: 'today-todos',
+    title: "Today's Plan",
+    component: TodayTodos,
+    refreshInterval: 60000,
+  },
+  {
     id: 'system-stats',
     title: 'System Stats',
     component: SystemStats,
@@ -43,12 +49,6 @@ const modules: DashboardModule[] = [
     title: 'Contacts',
     component: Contacts,
     refreshInterval: 300000,
-  },
-  {
-    id: 'today-todos',
-    title: "Today's Plan",
-    component: TodayTodos,
-    refreshInterval: 60000,
   },
 ];
 
