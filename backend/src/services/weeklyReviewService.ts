@@ -16,6 +16,20 @@ const PLANS_PATH = path.join(DATA_PATH, 'weekly-plans');
 const PROFILE_PATH = path.join(DATA_PATH, 'learning-profile.yaml');
 const VAULT_PATH = '/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault';
 
+function getNowInPT(): Date {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const year = parseInt(parts.find(p => p.type === 'year')!.value);
+  const month = parseInt(parts.find(p => p.type === 'month')!.value);
+  const day = parseInt(parts.find(p => p.type === 'day')!.value);
+  return new Date(year, month - 1, day);
+}
+
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNum = d.getUTCDay() || 7;
@@ -25,7 +39,7 @@ function getISOWeek(date: Date): number {
 }
 
 function getCurrentWeekString(): string {
-  const now = new Date();
+  const now = getNowInPT();
   const week = getISOWeek(now);
   return `${now.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
@@ -48,7 +62,7 @@ function savePlanToFile(plan: WeeklyPlan): void {
 }
 
 function getTodayDateString(): string {
-  const now = new Date();
+  const now = getNowInPT();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
@@ -56,14 +70,14 @@ function getTodayDateString(): string {
 }
 
 function getWeeklyNoteTitle(): string {
-  const now = new Date();
+  const now = getNowInPT();
   const year = now.getFullYear();
   const week = getISOWeek(now);
   return `${year} Week ${String(week).padStart(2, '0')}`;
 }
 
 function getPreviousWeekString(): string {
-  const now = new Date();
+  const now = getNowInPT();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const week = getISOWeek(weekAgo);
   return `${weekAgo.getFullYear()}-W${String(week).padStart(2, '0')}`;
