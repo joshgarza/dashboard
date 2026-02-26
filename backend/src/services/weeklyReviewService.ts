@@ -61,7 +61,7 @@ function savePlanToFile(plan: WeeklyPlan): void {
   fs.writeFileSync(getPlanPath(plan.week), JSON.stringify(plan, null, 2) + '\n');
 }
 
-function getTodayDateString(): string {
+export function getTodayDateString(): string {
   const now = getNowInPT();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -122,8 +122,12 @@ export function toggleTask(dateStr: string, taskIndex: number): DailyTask {
   task.completed = !task.completed;
   savePlanToFile(plan);
 
-  // Sync back to Obsidian weekly note
-  syncTaskToObsidian(task, plan);
+  // Sync back to Obsidian weekly note (non-fatal)
+  try {
+    syncTaskToObsidian(task, plan);
+  } catch (err) {
+    console.error('[weeklyReview] Obsidian sync failed (toggle still saved):', err);
+  }
 
   return task;
 }

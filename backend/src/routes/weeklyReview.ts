@@ -3,6 +3,7 @@ import {
   getInterviewStatus,
   getTodayPlan,
   getWeeklyGoals,
+  getTodayDateString,
   toggleTask,
   streamInterview,
   generatePlan,
@@ -37,11 +38,7 @@ router.post('/weekly-review/today/:index/toggle', async (req: Request, res: Resp
       return;
     }
 
-    // Get today's date string
-    const now = new Date();
-    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-    const task = toggleTask(dateStr, index);
+    const task = toggleTask(getTodayDateString(), index);
     res.json({ success: true, data: task });
   } catch (err) {
     next(err);
