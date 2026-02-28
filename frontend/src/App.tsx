@@ -4,7 +4,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { Dashboard } from '@/components/Dashboard';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { WeatherTime } from '@/modules/WeatherTime';
-import { SystemStats } from '@/modules/SystemStats';
+import { LeadGenSources } from '@/modules/LeadGenSources';
 import { JobPipeline } from '@/modules/JobPipeline';
 import { Contacts } from '@/modules/Contacts';
 import { TodayTodos } from '@/modules/TodayTodos';
@@ -33,10 +33,9 @@ const modules: DashboardModule[] = [
     refreshInterval: 60000,
   },
   {
-    id: 'system-stats',
-    title: 'System Stats',
-    component: SystemStats,
-    refreshInterval: 5000,
+    id: 'lead-gen-sources',
+    title: 'Lead Gen Sources',
+    component: LeadGenSources,
   },
   {
     id: 'job-pipeline',

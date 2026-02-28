@@ -8,6 +8,7 @@ import { obsidianRouter } from './routes/obsidian.js';
 import { calendarRouter } from './routes/calendar.js';
 import { researchRouter } from './routes/research.js';
 import { weeklyReviewRouter } from './routes/weeklyReview.js';
+import { leadGenSourcesRouter } from './routes/leadGenSources.js';
 
 dotenv.config();
 
@@ -27,6 +28,7 @@ app.use('/api', obsidianRouter);
 app.use('/api', calendarRouter);
 app.use('/api', researchRouter);
 app.use('/api', weeklyReviewRouter);
+app.use('/api', leadGenSourcesRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
