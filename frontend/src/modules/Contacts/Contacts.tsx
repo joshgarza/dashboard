@@ -1,23 +1,70 @@
 import { useState, useEffect } from 'react';
 import { Users } from 'lucide-react';
-import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { config } from '@/config';
-
-// 1. Define the specific order as a constant
-const STAGE_ORDER = [
-  'Cold',
-  'Warm',
-  'Hot',
-  'Meeting Scheduled',
-  'Follow-Up',
-  'Post-Meeting',
-  'Archive'
-] as const;
 
 interface ContactsData {
   total: number;
   stages: Record<string, number>;
+}
+
+interface FocusItem {
+  headline: string;
+  detail: string;
+}
+
+function getContactsFocus(stages: Record<string, number>): FocusItem[] {
+  const meetingScheduled = stages['Meeting Scheduled'] ?? 0;
+  const postMeeting = stages['Post-Meeting'] ?? 0;
+  const followUp = stages['Follow-Up'] ?? 0;
+  const hot = stages['Hot'] ?? 0;
+  const warm = stages['Warm'] ?? 0;
+  const cold = stages['Cold'] ?? 0;
+
+  const items: FocusItem[] = [];
+
+  if (meetingScheduled >= 1) {
+    items.push({
+      headline: 'Prep for meetings',
+      detail: `${meetingScheduled} meeting${meetingScheduled !== 1 ? 's' : ''} scheduled`,
+    });
+  }
+  if (postMeeting >= 1) {
+    items.push({
+      headline: postMeeting === 1 ? 'Send a post-meeting follow-up' : 'Send post-meeting follow-ups',
+      detail: postMeeting === 1 ? '1 contact awaiting follow-up' : `${postMeeting} contacts awaiting follow-up`,
+    });
+  }
+  if (followUp >= 1) {
+    items.push({
+      headline: 'Follow up with contacts',
+      detail: `${followUp} contact${followUp !== 1 ? 's' : ''} need follow-up`,
+    });
+  }
+  if (hot >= 1) {
+    items.push({
+      headline: 'Book meetings with hot leads',
+      detail: `${hot} hot lead${hot !== 1 ? 's' : ''} ready`,
+    });
+  }
+  if (warm >= 1) {
+    items.push({
+      headline: 'Nurture warm contacts',
+      detail: `${warm} warm contact${warm !== 1 ? 's' : ''} to engage`,
+    });
+  }
+  if (cold > 0) {
+    items.push({
+      headline: 'Start warming cold contacts',
+      detail: `${cold} cold contact${cold !== 1 ? 's' : ''} in the pipeline`,
+    });
+  }
+
+  if (items.length === 0) {
+    items.push({ headline: 'Expand your network', detail: 'Add new contacts to get started' });
+  }
+
+  return items.slice(0, 2);
 }
 
 export function Contacts() {
@@ -44,14 +91,12 @@ export function Contacts() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3">
         <Skeleton className="h-6 w-1/3" />
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-2 w-full" />
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-2 w-3/4" />
-        </div>
+        <Skeleton className="h-5 w-2/3" />
+        <Skeleton className="h-4 w-1/2" />
+        <Skeleton className="h-5 w-2/3" />
+        <Skeleton className="h-4 w-1/2" />
       </div>
     );
   }
@@ -59,29 +104,21 @@ export function Contacts() {
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!data) return null;
 
+  const items = getContactsFocus(data.stages);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Users className="h-5 w-5" />
-        <span className="text-lg font-semibold">{data.total} contacts</span>
+        <span className="text-lg font-semibold">Contacts</span>
       </div>
-
       <div className="space-y-3">
-        {/* 2. Map over the ordered array instead of Object.entries */}
-        {STAGE_ORDER.map((stage) => {
-          const count = data.stages[stage] ?? 0; // Default to 0 if missing from API
-          const percentage = data.total > 0 ? (count / data.total) * 100 : 0;
-
-          return (
-            <div key={stage} className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span>{stage}</span>
-                <span className="text-muted-foreground">{count}</span>
-              </div>
-              <Progress value={percentage} className="h-2" />
-            </div>
-          );
-        })}
+        {items.map((item, i) => (
+          <div key={i} className="space-y-0.5">
+            <p className="text-base font-medium">{item.headline}</p>
+            <p className="text-sm text-muted-foreground">{item.detail}</p>
+          </div>
+        ))}
       </div>
     </div>
   );
