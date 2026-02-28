@@ -6,6 +6,7 @@ services:
       - /app/node_modules
       - /mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault:/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault
       - /home/josh/coding/claude/research:/home/josh/coding/claude/research
+      - /home/josh/coding/claude/hopper-shared/data:/home/josh/coding/claude/hopper-shared/data
       - /home/josh/.claude:/home/node/.claude
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude

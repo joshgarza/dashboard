@@ -2,6 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import type { Response } from 'express';
+import { getHopperDb } from './hopperDb.js';
+import { initWeeklyReviewSchema } from './hopperSchema.js';
 import type {
   WeeklyPlan,
   DailyPlan,
@@ -11,10 +13,13 @@ import type {
   WeeklyContext,
 } from '../types/weeklyReview.js';
 
-const DATA_PATH = path.resolve(import.meta.dirname, '../../data');
-const PLANS_PATH = path.join(DATA_PATH, 'weekly-plans');
-const PROFILE_PATH = path.join(DATA_PATH, 'learning-profile.yaml');
-const VAULT_PATH = '/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault';
+const PROFILE_PATH = path.resolve(import.meta.dirname, '../../data/learning-profile.yaml');
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+initWeeklyReviewSchema();
+
+// ── Date helpers ─────────────────────────────────────────────────────────────
 
 function getNowInPT(): Date {
   const now = new Date();
@@ -44,21 +49,11 @@ function getCurrentWeekString(): string {
   return `${now.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
-function getPlanPath(week: string): string {
-  return path.join(PLANS_PATH, `${week}.json`);
-}
-
-function loadPlan(week: string): WeeklyPlan | null {
-  const planPath = getPlanPath(week);
-  if (!fs.existsSync(planPath)) return null;
-  return JSON.parse(fs.readFileSync(planPath, 'utf-8'));
-}
-
-function savePlanToFile(plan: WeeklyPlan): void {
-  if (!fs.existsSync(PLANS_PATH)) {
-    fs.mkdirSync(PLANS_PATH, { recursive: true });
-  }
-  fs.writeFileSync(getPlanPath(plan.week), JSON.stringify(plan, null, 2) + '\n');
+function getPreviousWeekString(): string {
+  const now = getNowInPT();
+  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const week = getISOWeek(weekAgo);
+  return `${weekAgo.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
 export function getTodayDateString(): string {
@@ -69,23 +64,80 @@ export function getTodayDateString(): string {
   return `${year}-${month}-${day}`;
 }
 
-function getWeeklyNoteTitle(): string {
-  const now = getNowInPT();
-  const year = now.getFullYear();
-  const week = getISOWeek(now);
-  return `${year} Week ${String(week).padStart(2, '0')}`;
+// ── DB read helpers ───────────────────────────────────────────────────────────
+
+interface PlanRow {
+  id: number;
+  week: string;
+  weekly_goals: string;
+  interviewed_at: string;
 }
 
-function getPreviousWeekString(): string {
-  const now = getNowInPT();
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const week = getISOWeek(weekAgo);
-  return `${weekAgo.getFullYear()}-W${String(week).padStart(2, '0')}`;
+interface TaskRow {
+  id: number;
+  plan_id: number;
+  thought_id: number | null;
+  scheduled_date: string;
+  day_focus: string | null;
+  task_text: string;
+  sort_order: number;
+  completed: number;
+  completed_at: string | null;
 }
+
+interface DeferredRow {
+  id: number;
+  thought_id: number | null;
+  task_text: string;
+  status: string;
+}
+
+function loadPlanFromDb(week: string): WeeklyPlan | null {
+  const db = getHopperDb();
+
+  const planRow = db
+    .prepare('SELECT * FROM svc_weekly_review_plans WHERE week = ?')
+    .get(week) as PlanRow | undefined;
+
+  if (!planRow) return null;
+
+  const taskRows = db
+    .prepare('SELECT * FROM svc_weekly_review_tasks WHERE plan_id = ? ORDER BY scheduled_date, sort_order')
+    .all(planRow.id) as TaskRow[];
+
+  const deferredRows = db
+    .prepare('SELECT * FROM svc_weekly_review_deferred WHERE plan_id = ?')
+    .all(planRow.id) as DeferredRow[];
+
+  // Group tasks by date
+  const days: Record<string, DailyPlan> = {};
+  for (const row of taskRows) {
+    if (!days[row.scheduled_date]) {
+      days[row.scheduled_date] = { focus: row.day_focus ?? '', tasks: [] };
+    }
+    days[row.scheduled_date].tasks.push({
+      id: row.id,
+      thought_id: row.thought_id,
+      text: row.task_text,
+      completed: row.completed === 1,
+    });
+  }
+
+  return {
+    week: planRow.week,
+    interviewedAt: planRow.interviewed_at,
+    weeklyGoals: JSON.parse(planRow.weekly_goals),
+    days,
+    unscheduled: deferredRows.filter(r => r.status === 'unscheduled').map(r => r.task_text),
+    dropped: deferredRows.filter(r => r.status === 'dropped').map(r => r.task_text),
+  };
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export function getInterviewStatus(): InterviewStatus {
   const week = getCurrentWeekString();
-  const plan = loadPlan(week);
+  const plan = loadPlanFromDb(week);
   return {
     needed: plan === null,
     week,
@@ -94,7 +146,7 @@ export function getInterviewStatus(): InterviewStatus {
 
 export function getTodayPlan(): DailyPlan | null {
   const week = getCurrentWeekString();
-  const plan = loadPlan(week);
+  const plan = loadPlanFromDb(week);
   if (!plan) return null;
 
   const today = getTodayDateString();
@@ -103,72 +155,73 @@ export function getTodayPlan(): DailyPlan | null {
 
 export function getWeeklyGoals(): string[] {
   const week = getCurrentWeekString();
-  const plan = loadPlan(week);
+  const plan = loadPlanFromDb(week);
   if (!plan) return [];
   return plan.weeklyGoals;
 }
 
 export function toggleTask(dateStr: string, taskIndex: number): DailyTask {
+  const db = getHopperDb();
   const week = getCurrentWeekString();
-  const plan = loadPlan(week);
-  if (!plan) throw new Error('No weekly plan exists');
 
-  const dayPlan = plan.days[dateStr];
-  if (!dayPlan) throw new Error(`No plan for date: ${dateStr}`);
+  const planRow = db
+    .prepare('SELECT id FROM svc_weekly_review_plans WHERE week = ?')
+    .get(week) as { id: number } | undefined;
+  if (!planRow) throw new Error('No weekly plan exists');
 
-  const task = dayPlan.tasks[taskIndex];
+  const tasks = db
+    .prepare(
+      'SELECT * FROM svc_weekly_review_tasks WHERE plan_id = ? AND scheduled_date = ? ORDER BY sort_order'
+    )
+    .all(planRow.id, dateStr) as TaskRow[];
+
+  const task = tasks[taskIndex];
   if (!task) throw new Error(`No task at index: ${taskIndex}`);
 
-  task.completed = !task.completed;
-  savePlanToFile(plan);
+  const newCompleted = task.completed === 0 ? 1 : 0;
+  const completedAt = newCompleted === 1 ? new Date().toISOString() : null;
 
-  // Sync back to Obsidian weekly note (non-fatal)
-  try {
-    syncTaskToObsidian(task, plan);
-  } catch (err) {
-    console.error('[weeklyReview] Obsidian sync failed (toggle still saved):', err);
-  }
+  db.prepare(
+    'UPDATE svc_weekly_review_tasks SET completed = ?, completed_at = ? WHERE id = ?'
+  ).run(newCompleted, completedAt, task.id);
 
-  return task;
-}
-
-function syncTaskToObsidian(task: DailyTask, plan: WeeklyPlan): void {
-  const noteTitle = getWeeklyNoteTitle();
-  const filePath = path.join(VAULT_PATH, `${noteTitle}.md`);
-
-  if (!fs.existsSync(filePath)) return;
-
-  let content = fs.readFileSync(filePath, 'utf-8');
-
-  // Normalize source to unchecked form to derive both variants
-  const unchecked = task.source.replace(/- \[x\]/i, '- [ ]');
-  const checked = unchecked.replace('- [ ]', '- [x]');
-
-  const findInNote = task.completed ? unchecked : checked;
-  const replaceWith = task.completed ? checked : unchecked;
-
-  if (content.includes(findInNote)) {
-    content = content.replace(findInNote, replaceWith);
-    fs.writeFileSync(filePath, content);
-  }
-
-  // Keep source in sync with the new checkbox state
-  task.source = replaceWith;
-  savePlanToFile(plan);
+  return {
+    id: task.id,
+    thought_id: task.thought_id,
+    text: task.task_text,
+    completed: newCompleted === 1,
+  };
 }
 
 export function getWeeklyContext(): WeeklyContext {
-  // Load current week's todos from Obsidian
-  const noteTitle = getWeeklyNoteTitle();
-  const filePath = path.join(VAULT_PATH, `${noteTitle}.md`);
-  let currentTodos = '';
-  if (fs.existsSync(filePath)) {
-    currentTodos = fs.readFileSync(filePath, 'utf-8');
-  }
+  const db = getHopperDb();
 
-  // Load previous week's plan summary
+  // All active todos from Hopper (category=todo, not dropped from a plan)
+  interface ThoughtRow { id: number; raw_input: string; }
+  const pendingTodos = db
+    .prepare(`
+      SELECT t.id, t.raw_input
+      FROM thoughts t
+      WHERE t.category = 'todo'
+        AND t.id NOT IN (
+          SELECT d.thought_id FROM svc_weekly_review_deferred d
+          WHERE d.status = 'dropped' AND d.thought_id IS NOT NULL
+        )
+        AND t.id NOT IN (
+          SELECT wrt.thought_id FROM svc_weekly_review_tasks wrt
+          WHERE wrt.completed = 1 AND wrt.thought_id IS NOT NULL
+        )
+      ORDER BY t.created_at ASC
+    `)
+    .all() as ThoughtRow[];
+
+  const currentTodos = pendingTodos
+    .map(t => `[${t.id}] ${t.raw_input}`)
+    .join('\n');
+
+  // Previous week summary
   const prevWeek = getPreviousWeekString();
-  const prevPlan = loadPlan(prevWeek);
+  const prevPlan = loadPlanFromDb(prevWeek);
   let previousWeekSummary = 'No previous week data available.';
   if (prevPlan) {
     let planned = 0;
@@ -180,7 +233,7 @@ export function getWeeklyContext(): WeeklyContext {
     previousWeekSummary = `Week ${prevPlan.week}: ${completed}/${planned} tasks completed.\nGoals: ${prevPlan.weeklyGoals.join(', ')}`;
   }
 
-  // Load learning profile
+  // Learning profile
   let profile = '';
   if (fs.existsSync(PROFILE_PATH)) {
     profile = fs.readFileSync(PROFILE_PATH, 'utf-8');
@@ -190,12 +243,66 @@ export function getWeeklyContext(): WeeklyContext {
 }
 
 export function savePlan(plan: WeeklyPlan): void {
-  savePlanToFile(plan);
+  const db = getHopperDb();
+
+  // Upsert the plan header
+  db.prepare(`
+    INSERT INTO svc_weekly_review_plans (week, weekly_goals, interviewed_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(week) DO UPDATE SET
+      weekly_goals = excluded.weekly_goals,
+      interviewed_at = excluded.interviewed_at
+  `).run(plan.week, JSON.stringify(plan.weeklyGoals), plan.interviewedAt);
+
+  const planRow = db
+    .prepare('SELECT id FROM svc_weekly_review_plans WHERE week = ?')
+    .get(plan.week) as { id: number };
+  const planId = planRow.id;
+
+  // Replace tasks and deferred for this plan
+  db.prepare('DELETE FROM svc_weekly_review_tasks WHERE plan_id = ?').run(planId);
+  db.prepare('DELETE FROM svc_weekly_review_deferred WHERE plan_id = ?').run(planId);
+
+  for (const [date, day] of Object.entries(plan.days)) {
+    for (let i = 0; i < day.tasks.length; i++) {
+      const task = day.tasks[i];
+      db.prepare(`
+        INSERT INTO svc_weekly_review_tasks
+          (plan_id, thought_id, scheduled_date, day_focus, task_text, sort_order, completed, completed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        planId,
+        task.thought_id ?? null,
+        date,
+        day.focus,
+        task.text,
+        i,
+        task.completed ? 1 : 0,
+        task.completed ? new Date().toISOString() : null
+      );
+    }
+  }
+
+  for (const text of plan.unscheduled) {
+    db.prepare(`
+      INSERT INTO svc_weekly_review_deferred (plan_id, thought_id, task_text, status)
+      VALUES (?, ?, ?, 'unscheduled')
+    `).run(planId, null, text);
+  }
+
+  for (const text of plan.dropped) {
+    db.prepare(`
+      INSERT INTO svc_weekly_review_deferred (plan_id, thought_id, task_text, status)
+      VALUES (?, ?, ?, 'dropped')
+    `).run(planId, null, text);
+  }
 }
 
 export function updateProfile(updates: string): void {
   fs.writeFileSync(PROFILE_PATH, updates);
 }
+
+// ── Agent prompts ─────────────────────────────────────────────────────────────
 
 const INTERVIEW_SYSTEM_PROMPT = `You are a weekly planning assistant helping the user organize their todo list into daily plans. You conduct a brief, focused interview (~5-10 minutes).
 
@@ -226,7 +333,7 @@ export function streamInterview(
 ## User Profile
 ${context.profile}
 
-## This Week's Todos
+## Current Todo List (ID: text)
 ${context.currentTodos}
 
 ## Last Week's Results
@@ -240,7 +347,7 @@ ${context.previousWeekSummary}`;
 
     const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
 
-    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'stream-json', '--verbose'], {
+    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--model', 'claude-opus-4-6'], {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -320,7 +427,7 @@ The JSON must match this exact schema:
       "tasks": [
         {
           "text": "Human-readable task description",
-          "source": "- [ ] Original markdown line from the weekly note",
+          "thought_id": 42,
           "completed": false
         }
       ]
@@ -332,8 +439,7 @@ The JSON must match this exact schema:
 
 Rules:
 - Only include days from today through the rest of the week (Monday-Sunday)
-- The "source" field must be the exact markdown line from the weekly note (e.g. "- [ ] Print and post POD permits")
-- If a task doesn't come from the weekly note, use "- [ ] {task text}" as the source
+- The "thought_id" field must be the integer ID from the todo list provided (e.g. 42 for "[42] Some task"). Use null if the task was not in the provided list.
 - Set completed to false for all tasks
 - Keep max 5 tasks per day unless the user specifically requested more
 - Respect any preferences expressed in the conversation`;
@@ -351,7 +457,7 @@ export function generatePlan(
 
     const prompt = `${FINALIZE_SYSTEM_PROMPT}
 
-## This Week's Todos (for source field matching)
+## Current Todo List (ID: text)
 ${context.currentTodos}
 
 ## Conversation
@@ -363,7 +469,7 @@ Generate the JSON plan now:`;
 
     const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
 
-    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'json'], {
+    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'json', '--model', 'claude-opus-4-6'], {
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -386,7 +492,6 @@ Generate the JSON plan now:`;
       }
 
       try {
-        // The --output-format json wraps the response; extract the text content
         const wrapper = JSON.parse(stdout);
         let text = '';
         if (wrapper.result) {
@@ -399,7 +504,6 @@ Generate the JSON plan now:`;
           text = stdout;
         }
 
-        // Strip any markdown code fences if present
         text = text.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
 
         const planData = JSON.parse(text);
@@ -413,7 +517,7 @@ Generate the JSON plan now:`;
           dropped: planData.dropped || [],
         };
 
-        savePlanToFile(plan);
+        savePlan(plan);
         resolve(plan);
       } catch (err) {
         reject(new Error(`Failed to parse plan JSON: ${(err as Error).message}\nRaw output: ${stdout.slice(0, 500)}`));

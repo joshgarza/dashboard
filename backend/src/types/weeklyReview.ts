@@ -1,6 +1,7 @@
 export interface DailyTask {
+  id: number;          // svc_weekly_review_tasks.id
+  thought_id: number | null;
   text: string;
-  source: string;       // original markdown line from weekly note
   completed: boolean;
 }
 
