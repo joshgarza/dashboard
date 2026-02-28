@@ -21,9 +21,22 @@ router.get('/crm/contacts', async (req: Request, res: Response, next: NextFuncti
     const contacts = await fetchContacts(config);
 
     const stages: Record<string, number> = {};
+    const followUpWindowDays = 3;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() + followUpWindowDays);
+    cutoff.setHours(23, 59, 59, 999);
+
+    let imminentFollowUps = 0;
     for (const contact of contacts.list) {
       const stage = contact.cStatus || 'Unknown';
       stages[stage] = (stages[stage] || 0) + 1;
+
+      if (contact.cFollowUp) {
+        const followUpDate = new Date(contact.cFollowUp);
+        if (!isNaN(followUpDate.getTime()) && followUpDate <= cutoff) {
+          imminentFollowUps++;
+        }
+      }
     }
 
     res.json({
@@ -31,6 +44,7 @@ router.get('/crm/contacts', async (req: Request, res: Response, next: NextFuncti
       data: {
         total: contacts.total,
         stages,
+        imminentFollowUps,
       },
     });
   } catch (err) {
