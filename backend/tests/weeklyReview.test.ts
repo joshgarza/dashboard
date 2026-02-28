@@ -1,18 +1,33 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 import express from 'express';
+import Database from 'better-sqlite3';
 import { errorHandler } from '../src/middleware/errorHandler.js';
 
-const mockExistsSync = jest.fn();
-const mockReadFileSync = jest.fn();
-const mockWriteFileSync = jest.fn();
-const mockMkdirSync = jest.fn();
+// In-memory DB for tests
+const db = new Database(':memory:');
+db.pragma('foreign_keys = ON');
 
+// Create minimal thoughts table (referenced by FKs in weekly review schema)
+db.exec(`
+  CREATE TABLE thoughts (
+    id INTEGER PRIMARY KEY,
+    raw_input TEXT,
+    category TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+jest.unstable_mockModule('../src/services/hopperDb.js', () => ({
+  getHopperDb: () => db,
+}));
+
+// fs mock for learning-profile.yaml reads
 jest.unstable_mockModule('fs', () => ({
-  existsSync: mockExistsSync,
-  readFileSync: mockReadFileSync,
-  writeFileSync: mockWriteFileSync,
-  mkdirSync: mockMkdirSync,
+  existsSync: () => false,
+  readFileSync: () => '',
+  writeFileSync: jest.fn(),
+  mkdirSync: jest.fn(),
 }));
 
 const { weeklyReviewRouter } = await import('../src/routes/weeklyReview.js');
@@ -22,43 +37,59 @@ app.use(express.json());
 app.use('/api', weeklyReviewRouter);
 app.use(errorHandler);
 
-// Helper to build a weekly plan JSON
-function buildPlan(overrides: Record<string, unknown> = {}) {
+// Replicate the service's Pacific-time date helpers for test data setup
+function getTestNowInPT(): Date {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const today = `${year}-${month}-${day}`;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const year = parseInt(parts.find(p => p.type === 'year')!.value);
+  const month = parseInt(parts.find(p => p.type === 'month')!.value);
+  const day = parseInt(parts.find(p => p.type === 'day')!.value);
+  return new Date(year, month - 1, day);
+}
 
-  return JSON.stringify({
-    week: '2026-W08',
-    interviewedAt: '2026-02-23T10:30:00Z',
-    weeklyGoals: ['Clear admin backlog', 'Claude tooling setup'],
-    days: {
-      [today]: {
-        focus: 'Admin catch-up day',
-        tasks: [
-          { text: 'Print POD permits', source: '- [ ] Print POD permits', completed: false },
-          { text: 'Follow up with Nathan', source: '- [ ] Follow up with Nathan', completed: false },
-          { text: 'Message Christina', source: '- [ ] Message Christina', completed: true },
-        ],
-      },
-    },
-    unscheduled: ['Clean garage'],
-    dropped: ['Old task'],
-    ...overrides,
-  });
+function getTestWeekString(): string {
+  const d = getTestNowInPT();
+  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil((((utc.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
+
+function getTestTodayString(): string {
+  const d = getTestNowInPT();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function insertPlan(week: string, goals: string[] = ['Goal A', 'Goal B']): { id: number } {
+  db.prepare(
+    'INSERT INTO svc_weekly_review_plans (week, weekly_goals, interviewed_at) VALUES (?, ?, ?)'
+  ).run(week, JSON.stringify(goals), new Date().toISOString());
+  return db.prepare('SELECT id FROM svc_weekly_review_plans WHERE week = ?').get(week) as { id: number };
+}
+
+function insertTask(planId: number, date: string, text: string, order: number, completed = false, focus = 'Test focus') {
+  db.prepare(
+    'INSERT INTO svc_weekly_review_tasks (plan_id, scheduled_date, day_focus, task_text, sort_order, completed) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(planId, date, focus, text, order, completed ? 1 : 0);
 }
 
 describe('Weekly Review API', () => {
   beforeEach(() => {
-    jest.resetAllMocks();
+    db.exec('DELETE FROM svc_weekly_review_deferred');
+    db.exec('DELETE FROM svc_weekly_review_tasks');
+    db.exec('DELETE FROM svc_weekly_review_plans');
   });
 
   describe('GET /api/weekly-review/status', () => {
     it('returns needed: true when no plan exists for current week', async () => {
-      mockExistsSync.mockReturnValue(false);
-
       const response = await request(app).get('/api/weekly-review/status');
 
       expect(response.status).toBe(200);
@@ -68,8 +99,7 @@ describe('Weekly Review API', () => {
     });
 
     it('returns needed: false when plan exists', async () => {
-      mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(buildPlan());
+      insertPlan(getTestWeekString());
 
       const response = await request(app).get('/api/weekly-review/status');
 
@@ -80,8 +110,12 @@ describe('Weekly Review API', () => {
 
   describe('GET /api/weekly-review/today', () => {
     it("returns correct day's tasks from weekly plan", async () => {
-      mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(buildPlan());
+      const week = getTestWeekString();
+      const today = getTestTodayString();
+      const plan = insertPlan(week, ['Clear admin backlog', 'Claude tooling setup']);
+      insertTask(plan.id, today, 'Print POD permits', 0, false, 'Admin catch-up day');
+      insertTask(plan.id, today, 'Follow up with Nathan', 1, false, 'Admin catch-up day');
+      insertTask(plan.id, today, 'Message Christina', 2, true, 'Admin catch-up day');
 
       const response = await request(app).get('/api/weekly-review/today');
 
@@ -93,8 +127,6 @@ describe('Weekly Review API', () => {
     });
 
     it('returns null when no plan exists', async () => {
-      mockExistsSync.mockReturnValue(false);
-
       const response = await request(app).get('/api/weekly-review/today');
 
       expect(response.status).toBe(200);
@@ -102,8 +134,10 @@ describe('Weekly Review API', () => {
     });
 
     it('returns weekly goals alongside today plan', async () => {
-      mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(buildPlan());
+      const week = getTestWeekString();
+      const today = getTestTodayString();
+      const plan = insertPlan(week, ['Clear admin backlog', 'Claude tooling setup']);
+      insertTask(plan.id, today, 'Some task', 0);
 
       const response = await request(app).get('/api/weekly-review/today');
 
@@ -112,23 +146,29 @@ describe('Weekly Review API', () => {
   });
 
   describe('POST /api/weekly-review/today/:index/toggle', () => {
-    it('flips completion status in plan JSON', async () => {
-      mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(buildPlan());
+    it('flips completion status in DB', async () => {
+      const week = getTestWeekString();
+      const today = getTestTodayString();
+      const plan = insertPlan(week);
+      insertTask(plan.id, today, 'Print POD permits', 0, false);
+      insertTask(plan.id, today, 'Follow up with Nathan', 1, false);
+      insertTask(plan.id, today, 'Message Christina', 2, true);
 
       const response = await request(app).post('/api/weekly-review/today/0/toggle');
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(response.body.data.completed).toBe(true);
-      expect(mockWriteFileSync).toHaveBeenCalled();
     });
 
     it('toggles completed task back to incomplete', async () => {
-      mockExistsSync.mockReturnValue(true);
-      mockReadFileSync.mockReturnValue(buildPlan());
+      const week = getTestWeekString();
+      const today = getTestTodayString();
+      const plan = insertPlan(week);
+      insertTask(plan.id, today, 'Print POD permits', 0, false);
+      insertTask(plan.id, today, 'Follow up with Nathan', 1, false);
+      insertTask(plan.id, today, 'Message Christina', 2, true);
 
-      // Task at index 2 is completed: true
       const response = await request(app).post('/api/weekly-review/today/2/toggle');
 
       expect(response.status).toBe(200);
@@ -140,25 +180,6 @@ describe('Weekly Review API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
-    });
-
-    it('syncs checkbox back to Obsidian weekly note', async () => {
-      const noteContent = '## Todo\n- [ ] Print POD permits\n- [ ] Follow up with Nathan\n- [x] Message Christina\n';
-      mockExistsSync.mockReturnValue(true);
-      // First call reads the plan, subsequent calls read the Obsidian note
-      mockReadFileSync
-        .mockReturnValueOnce(buildPlan())
-        .mockReturnValueOnce(noteContent)
-        .mockReturnValue(buildPlan());
-
-      await request(app).post('/api/weekly-review/today/0/toggle');
-
-      // Should have written to the weekly note with updated checkbox
-      const writeCalls = mockWriteFileSync.mock.calls;
-      const noteWrite = writeCalls.find(
-        (call) => typeof call[1] === 'string' && call[1].includes('- [x] Print POD permits')
-      );
-      expect(noteWrite).toBeDefined();
     });
   });
 
