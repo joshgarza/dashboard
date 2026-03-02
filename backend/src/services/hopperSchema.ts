@@ -36,8 +36,16 @@ export function initWeeklyReviewSchema(): void {
       status TEXT NOT NULL DEFAULT 'unscheduled'
     );
 
+    CREATE TABLE IF NOT EXISTS svc_dashboard_completions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thought_id INTEGER NOT NULL UNIQUE REFERENCES thoughts(id),
+      completed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      source TEXT NOT NULL DEFAULT 'manual'
+    );
+
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_plan ON svc_weekly_review_tasks(plan_id);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_date ON svc_weekly_review_tasks(scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_deferred_plan ON svc_weekly_review_deferred(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_svc_dc_thought ON svc_dashboard_completions(thought_id);
   `);
 }

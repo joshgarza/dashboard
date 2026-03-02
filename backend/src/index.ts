@@ -9,6 +9,7 @@ import { calendarRouter } from './routes/calendar.js';
 import { researchRouter } from './routes/research.js';
 import { weeklyReviewRouter } from './routes/weeklyReview.js';
 import { leadGenSourcesRouter } from './routes/leadGenSources.js';
+import { todosRouter } from './routes/todos.js';
 
 dotenv.config();
 
@@ -29,6 +30,7 @@ app.use('/api', calendarRouter);
 app.use('/api', researchRouter);
 app.use('/api', weeklyReviewRouter);
 app.use('/api', leadGenSourcesRouter);
+app.use('/api', todosRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { config } from '@/config';
 import type { ChatMessage } from './types';
+import { AllTodos } from './AllTodos';
 
 interface InterviewChatProps {
   onFinalize: (messages: ChatMessage[]) => void;
@@ -12,6 +13,7 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [allTodosRefreshKey, setAllTodosRefreshKey] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -84,6 +86,8 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
                 copy[copy.length - 1] = { ...last, content: last.content + parsed.text };
                 return copy;
               });
+            } else if (parsed.type === 'message_stop') {
+              setAllTodosRefreshKey(k => k + 1);
             }
           } catch {
             // skip malformed lines
@@ -175,6 +179,8 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
           {finalizing ? 'Generating Plan...' : 'Finalize Plan'}
         </Button>
       )}
+
+      <AllTodos refreshKey={allTodosRefreshKey} />
     </div>
   );
 }

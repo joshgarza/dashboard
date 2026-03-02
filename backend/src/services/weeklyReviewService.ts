@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import type { Response } from 'express';
 import { getHopperDb } from './hopperDb.js';
 import { initWeeklyReviewSchema } from './hopperSchema.js';
+import { completeTodo } from './todoService.js';
 import type {
   WeeklyPlan,
   DailyPlan,
@@ -210,6 +211,9 @@ export function getWeeklyContext(): WeeklyContext {
         AND t.id NOT IN (
           SELECT wrt.thought_id FROM svc_weekly_review_tasks wrt
           WHERE wrt.completed = 1 AND wrt.thought_id IS NOT NULL
+        )
+        AND t.id NOT IN (
+          SELECT dc.thought_id FROM svc_dashboard_completions dc
         )
       ORDER BY t.created_at ASC
     `)
@@ -446,7 +450,35 @@ If an existing plan is provided for this week, open by acknowledging it: note wh
 - Use the weekly goals as the primary organizing principle — tasks that advance the goals should be prioritized
 - Keep the interview conversational and efficient
 - Learn from what the user tells you — note patterns for the profile
-- When proposing the daily plan, explain your reasoning briefly`;
+- When proposing the daily plan, explain your reasoning briefly
+
+## Actions
+When you and the user agree that a todo is complete, emit an action tag on its own line:
+<action type="complete_todo" thought_id="42" />
+The system processes this automatically and removes it from visible output.
+Only use IDs from the provided todo list. Do not fabricate IDs.`;
+
+const ACTION_TAG_RE = /<action\s+type="complete_todo"\s+thought_id="(\d+)"\s*\/>/g;
+
+function stripActionTags(text: string): string {
+  return text.replace(ACTION_TAG_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function executeActions(fullText: string): void {
+  let match: RegExpExecArray | null;
+  const re = new RegExp(ACTION_TAG_RE.source, 'g');
+  while ((match = re.exec(fullText)) !== null) {
+    const thoughtId = parseInt(match[1], 10);
+    if (!isNaN(thoughtId)) {
+      const found = completeTodo(thoughtId, 'agent');
+      if (found) {
+        console.log(`[interview] agent completed todo ${thoughtId}`);
+      } else {
+        console.warn(`[interview] agent tried to complete unknown todo ${thoughtId}`);
+      }
+    }
+  }
+}
 
 export function streamInterview(
   messages: ChatMessage[],
@@ -480,6 +512,7 @@ ${context.previousWeekSummary}${context.currentWeekContext ? `\n\n## This Week's
     });
 
     let buffer = '';
+    let fullResponseText = '';
 
     child.stdout.on('data', (chunk: Buffer) => {
       buffer += chunk.toString();
@@ -491,11 +524,15 @@ ${context.previousWeekSummary}${context.currentWeekContext ? `\n\n## This Week's
         try {
           const event = JSON.parse(line);
           if (event.type === 'assistant' && event.message?.content) {
-            const text = event.message.content
+            const raw = event.message.content
               .map((b: { text?: string }) => b.text || '')
               .join('');
-            if (text) {
-              res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
+            if (raw) {
+              fullResponseText += raw;
+              const text = stripActionTags(raw);
+              if (text) {
+                res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
+              }
             }
           }
         } catch {
@@ -513,12 +550,22 @@ ${context.previousWeekSummary}${context.currentWeekContext ? `\n\n## This Week's
         try {
           const event = JSON.parse(buffer);
           if (event.type === 'assistant' && event.subtype === 'text') {
-            res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text: event.text })}\n\n`);
+            fullResponseText += event.text;
+            const text = stripActionTags(event.text);
+            if (text) {
+              res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
+            }
           }
         } catch {
           // ignore
         }
       }
+
+      // Execute any action tags accumulated over the full response
+      if (fullResponseText) {
+        executeActions(fullResponseText);
+      }
+
       res.write(`data: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
       res.end();
       if (code !== 0) {
