@@ -31,7 +31,7 @@ describe('CRM API', () => {
   });
 
   describe('GET /api/crm/contacts', () => {
-    it('returns contacts grouped by cStatus', async () => {
+    it('returns contacts grouped by cStatus with imminentFollowUps', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
@@ -57,6 +57,7 @@ describe('CRM API', () => {
         'Follow-Up': 1,
         'Engaged': 1,
       });
+      expect(response.body.data.imminentFollowUps).toBe(0);
     });
 
     it('handles contacts without cStatus as Unknown', async () => {
@@ -86,6 +87,72 @@ describe('CRM API', () => {
 
       expect(response.body.data.total).toBe(0);
       expect(response.body.data.stages).toEqual({});
+      expect(response.body.data.imminentFollowUps).toBe(0);
+    });
+
+    it('counts contacts with overdue cFollowUp as imminent', async () => {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          total: 2,
+          list: [
+            { id: '1', name: 'Overdue', cStatus: 'Follow-Up', cFollowUp: yesterday.toISOString().split('T')[0] },
+            { id: '2', name: 'No date', cStatus: 'Follow-Up' },
+          ],
+        }),
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.body.data.imminentFollowUps).toBe(1);
+    });
+
+    it('counts contacts with cFollowUp within 3 days as imminent', async () => {
+      const today = new Date();
+      const tomorrow = new Date();
+      tomorrow.setDate(today.getDate() + 1);
+      const inThreeDays = new Date();
+      inThreeDays.setDate(today.getDate() + 3);
+      const inFiveDays = new Date();
+      inFiveDays.setDate(today.getDate() + 5);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          total: 4,
+          list: [
+            { id: '1', name: 'Today', cStatus: 'Follow-Up', cFollowUp: today.toISOString().split('T')[0] },
+            { id: '2', name: 'Tomorrow', cStatus: 'Post-Meeting', cFollowUp: tomorrow.toISOString().split('T')[0] },
+            { id: '3', name: 'In 3 days', cStatus: 'Follow-Up', cFollowUp: inThreeDays.toISOString().split('T')[0] },
+            { id: '4', name: 'In 5 days', cStatus: 'Follow-Up', cFollowUp: inFiveDays.toISOString().split('T')[0] },
+          ],
+        }),
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.body.data.imminentFollowUps).toBe(3);
+    });
+
+    it('excludes contacts with no cFollowUp from imminent count', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          total: 3,
+          list: [
+            { id: '1', name: 'No date', cStatus: 'Follow-Up' },
+            { id: '2', name: 'Null date', cStatus: 'Follow-Up', cFollowUp: null },
+            { id: '3', name: 'Empty date', cStatus: 'Post-Meeting', cFollowUp: '' },
+          ],
+        }),
+      } as Response);
+
+      const response = await request(app).get('/api/crm/contacts');
+
+      expect(response.body.data.imminentFollowUps).toBe(0);
     });
 
     it('uses correct API endpoint for Contacts', async () => {

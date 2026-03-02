@@ -51,11 +51,18 @@ describe('App', () => {
           }),
         } as Response);
       }
-      // CRM pipeline/contacts mock
-      if (url.includes('/crm/pipeline') || url.includes('/crm/contacts')) {
+      // CRM pipeline mock
+      if (url.includes('/crm/pipeline')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({ success: true, data: { total: 0, stages: {} } }),
+        } as Response);
+      }
+      // CRM contacts mock
+      if (url.includes('/crm/contacts')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: { total: 0, stages: {}, imminentFollowUps: 0 } }),
         } as Response);
       }
       // Weekly review status mock
@@ -88,18 +95,18 @@ describe('App', () => {
   it('renders the dashboard header', async () => {
     render(<MemoryRouter><App /></MemoryRouter>);
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
-    // Wait for SystemStats to finish loading (shows "No devices registered" when empty)
+    // Wait for async modules to finish loading
     await waitFor(() => {
-      expect(screen.getByText(/No devices registered/i)).toBeInTheDocument();
+      expect(screen.getByText('Expand your network')).toBeInTheDocument();
     });
   });
 
   it('renders the theme toggle button', async () => {
     render(<MemoryRouter><App /></MemoryRouter>);
     expect(screen.getByRole('button', { name: /switch to dark mode/i })).toBeInTheDocument();
-    // Wait for SystemStats to finish loading
+    // Wait for async modules to finish loading
     await waitFor(() => {
-      expect(screen.getByText(/No devices registered/i)).toBeInTheDocument();
+      expect(screen.getByText('Expand your network')).toBeInTheDocument();
     });
   });
 });

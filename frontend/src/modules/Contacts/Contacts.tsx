@@ -6,6 +6,7 @@ import { config } from '@/config';
 interface ContactsData {
   total: number;
   stages: Record<string, number>;
+  imminentFollowUps: number;
 }
 
 interface FocusItem {
@@ -13,10 +14,8 @@ interface FocusItem {
   detail: string;
 }
 
-function getContactsFocus(stages: Record<string, number>): FocusItem[] {
+function getContactsFocus(stages: Record<string, number>, imminentFollowUps: number): FocusItem[] {
   const meetingScheduled = stages['Meeting Scheduled'] ?? 0;
-  const postMeeting = stages['Post-Meeting'] ?? 0;
-  const followUp = stages['Follow-Up'] ?? 0;
   const hot = stages['Hot'] ?? 0;
   const warm = stages['Warm'] ?? 0;
   const cold = stages['Cold'] ?? 0;
@@ -29,16 +28,10 @@ function getContactsFocus(stages: Record<string, number>): FocusItem[] {
       detail: `${meetingScheduled} meeting${meetingScheduled !== 1 ? 's' : ''} scheduled`,
     });
   }
-  if (postMeeting >= 1) {
+  if (imminentFollowUps >= 1) {
     items.push({
-      headline: postMeeting === 1 ? 'Send a post-meeting follow-up' : 'Send post-meeting follow-ups',
-      detail: postMeeting === 1 ? '1 contact awaiting follow-up' : `${postMeeting} contacts awaiting follow-up`,
-    });
-  }
-  if (followUp >= 1) {
-    items.push({
-      headline: 'Follow up with contacts',
-      detail: `${followUp} contact${followUp !== 1 ? 's' : ''} need follow-up`,
+      headline: imminentFollowUps === 1 ? 'Follow up with a contact' : 'Follow up with contacts',
+      detail: `${imminentFollowUps} contact${imminentFollowUps !== 1 ? 's' : ''} need follow-up soon`,
     });
   }
   if (hot >= 1) {
@@ -104,7 +97,7 @@ export function Contacts() {
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!data) return null;
 
-  const items = getContactsFocus(data.stages);
+  const items = getContactsFocus(data.stages, data.imminentFollowUps);
 
   return (
     <div className="space-y-4">
