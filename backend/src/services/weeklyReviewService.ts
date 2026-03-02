@@ -219,18 +219,44 @@ export function getWeeklyContext(): WeeklyContext {
     .map(t => `[${t.id}] ${t.raw_input}`)
     .join('\n');
 
-  // Previous week summary
+  // Previous week summary (detailed)
   const prevWeek = getPreviousWeekString();
   const prevPlan = loadPlanFromDb(prevWeek);
   let previousWeekSummary = 'No previous week data available.';
   if (prevPlan) {
-    let planned = 0;
-    let completed = 0;
+    const completedTasks: string[] = [];
+    const skippedTasks: string[] = [];
     for (const day of Object.values(prevPlan.days)) {
-      planned += day.tasks.length;
-      completed += day.tasks.filter(t => t.completed).length;
+      for (const task of day.tasks) {
+        if (task.completed) completedTasks.push(task.text);
+        else skippedTasks.push(task.text);
+      }
     }
-    previousWeekSummary = `Week ${prevPlan.week}: ${completed}/${planned} tasks completed.\nGoals: ${prevPlan.weeklyGoals.join(', ')}`;
+    const planned = completedTasks.length + skippedTasks.length;
+    const pct = planned > 0 ? Math.round((completedTasks.length / planned) * 100) : 0;
+    previousWeekSummary = `Week ${prevPlan.week} — ${completedTasks.length}/${planned} tasks completed (${pct}%)
+Goals: ${prevPlan.weeklyGoals.join('; ')}
+Completed: ${completedTasks.length > 0 ? completedTasks.map(t => `  - ${t}`).join('\n') : '  (none)'}
+Skipped/not done: ${skippedTasks.length > 0 ? skippedTasks.map(t => `  - ${t}`).join('\n') : '  (none)'}`;
+  }
+
+  // Current week plan (for redo continuity)
+  const currWeek = getCurrentWeekString();
+  const currPlan = loadPlanFromDb(currWeek);
+  let currentWeekContext = '';
+  if (currPlan) {
+    const doneThisWeek: string[] = [];
+    const pendingThisWeek: string[] = [];
+    for (const day of Object.values(currPlan.days)) {
+      for (const task of day.tasks) {
+        if (task.completed) doneThisWeek.push(task.text);
+        else pendingThisWeek.push(task.text);
+      }
+    }
+    currentWeekContext = `An existing plan already exists for this week (${currWeek}).
+Goals set earlier: ${currPlan.weeklyGoals.join('; ')}
+Already completed this week (${doneThisWeek.length}): ${doneThisWeek.length > 0 ? doneThisWeek.map(t => `  - ${t}`).join('\n') : '  (none)'}
+Still pending in original plan (${pendingThisWeek.length}): ${pendingThisWeek.length > 0 ? pendingThisWeek.map(t => `  - ${t}`).join('\n') : '  (none)'}`;
   }
 
   // Learning profile
@@ -239,7 +265,7 @@ export function getWeeklyContext(): WeeklyContext {
     profile = fs.readFileSync(PROFILE_PATH, 'utf-8');
   }
 
-  return { currentTodos, previousWeekSummary, profile };
+  return { currentTodos, previousWeekSummary, currentWeekContext, profile };
 }
 
 export function savePlan(plan: WeeklyPlan): void {
@@ -259,6 +285,16 @@ export function savePlan(plan: WeeklyPlan): void {
     .get(plan.week) as { id: number };
   const planId = planRow.id;
 
+  // Capture existing completion state before replacing tasks (for redo continuity)
+  interface CompletedRow { thought_id: number | null; task_text: string; completed_at: string; }
+  const prevCompleted = db
+    .prepare('SELECT thought_id, task_text, completed_at FROM svc_weekly_review_tasks WHERE plan_id = ? AND completed = 1')
+    .all(planId) as CompletedRow[];
+  const completedByThoughtId = new Map(
+    prevCompleted.filter(r => r.thought_id != null).map(r => [r.thought_id!, r.completed_at])
+  );
+  const completedByText = new Map(prevCompleted.map(r => [r.task_text, r.completed_at]));
+
   // Replace tasks and deferred for this plan
   db.prepare('DELETE FROM svc_weekly_review_tasks WHERE plan_id = ?').run(planId);
   db.prepare('DELETE FROM svc_weekly_review_deferred WHERE plan_id = ?').run(planId);
@@ -266,6 +302,12 @@ export function savePlan(plan: WeeklyPlan): void {
   for (const [date, day] of Object.entries(plan.days)) {
     for (let i = 0; i < day.tasks.length; i++) {
       const task = day.tasks[i];
+      const prevCompletedAt =
+        (task.thought_id != null ? completedByThoughtId.get(task.thought_id) : undefined) ??
+        completedByText.get(task.text) ??
+        null;
+      const isCompleted = prevCompletedAt != null ? 1 : (task.completed ? 1 : 0);
+      const completedAt = prevCompletedAt ?? (task.completed ? new Date().toISOString() : null);
       db.prepare(`
         INSERT INTO svc_weekly_review_tasks
           (plan_id, thought_id, scheduled_date, day_focus, task_text, sort_order, completed, completed_at)
@@ -277,8 +319,8 @@ export function savePlan(plan: WeeklyPlan): void {
         day.focus,
         task.text,
         i,
-        task.completed ? 1 : 0,
-        task.completed ? new Date().toISOString() : null
+        isCompleted,
+        completedAt
       );
     }
   }
@@ -302,16 +344,101 @@ export function updateProfile(updates: string): void {
   fs.writeFileSync(PROFILE_PATH, updates);
 }
 
+export function updateProfileAfterReview(messages: ChatMessage[], plan: WeeklyPlan): void {
+  const currentProfile = fs.existsSync(PROFILE_PATH) ? fs.readFileSync(PROFILE_PATH, 'utf-8') : '';
+
+  // Build last-week completion stats for the prompt
+  const prevWeek = getPreviousWeekString();
+  const prevPlan = loadPlanFromDb(prevWeek);
+  let completionStats = 'No previous week data.';
+  if (prevPlan) {
+    const completedTasks: string[] = [];
+    const skippedTasks: string[] = [];
+    for (const day of Object.values(prevPlan.days)) {
+      for (const task of day.tasks) {
+        if (task.completed) completedTasks.push(task.text);
+        else skippedTasks.push(task.text);
+      }
+    }
+    const planned = completedTasks.length + skippedTasks.length;
+    const pct = planned > 0 ? Math.round((completedTasks.length / planned) * 100) : 0;
+    completionStats = `Week ${prevPlan.week}: ${completedTasks.length}/${planned} (${pct}%)
+Completed: ${completedTasks.join(', ') || 'none'}
+Skipped: ${skippedTasks.join(', ') || 'none'}`;
+  }
+
+  const conversationText = messages
+    .map(m => (m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`))
+    .join('\n\n');
+
+  const prompt = `You are a productivity analyst updating a user's learning profile after their weekly review session.
+
+Current profile (YAML):
+${currentProfile}
+
+Weekly review conversation:
+${conversationText}
+
+Last week's completion data:
+${completionStats}
+
+This week's goals: ${plan.weeklyGoals.join('; ')}
+
+Update the profile YAML based on evidence from this conversation. You MUST:
+- Update avg_weekly_completion with the latest completion rate (rolling — weight recent weeks more)
+- Update commonly_deferred with task types/themes that keep getting skipped (infer from skipped tasks and conversation)
+- Update commonly_completed_first with task types the user reliably finishes
+- Update energy_patterns.notes with any patterns observed about when/how the user works best
+- Append one entry to review_history: { week: "${plan.week}", planned: <N>, completed: <N>, notes: "<one-line observation>" }
+
+Return ONLY valid YAML with the exact same top-level structure as the current profile. No explanation, no markdown fences.`;
+
+  const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
+
+  const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'json', '--model', 'claude-opus-4-6'], {
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+  child.stderr.on('data', (chunk: Buffer) => {
+    console.error('[profile-update stderr]', chunk.toString());
+  });
+
+  child.on('close', (code) => {
+    if (code !== 0) {
+      console.error('[profile-update] claude exited with code', code);
+      return;
+    }
+    try {
+      const wrapper = JSON.parse(stdout);
+      let yaml = typeof wrapper.result === 'string' ? wrapper.result : stdout;
+      yaml = yaml.replace(/^```(?:yaml)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
+      if (yaml) updateProfile(yaml);
+    } catch (err) {
+      console.error('[profile-update] failed to parse output:', (err as Error).message);
+    }
+  });
+
+  child.on('error', (err) => {
+    console.error('[profile-update] spawn error:', err.message);
+  });
+}
+
 // ── Agent prompts ─────────────────────────────────────────────────────────────
 
 const INTERVIEW_SYSTEM_PROMPT = `You are a weekly planning assistant helping the user organize their todo list into daily plans. You conduct a brief, focused interview (~5-10 minutes).
 
 ## Interview Flow
-1. Weekly goals: Ask "What are your goals this week?" — these become the lens for all prioritization decisions. Tasks that serve the goals get scheduled first; tasks that don't may get deferred.
-2. Brief reflection: What got done last week? What didn't? Any patterns?
+1. Retrospective: Open by presenting your analysis of last week — what was accomplished, what was skipped, and how well the completed work aligned with the goals that were set. Ask if this matches their experience or if there's context you're missing. Do NOT ask them to recall what happened; you have the data.
+2. Weekly goals: Ask "What are your goals this week?" — these become the lens for all prioritization decisions.
 3. Triage: Walk through this week's items. For recurring deferrals, ask: keep, reschedule, or drop? Use weekly goals to guide which items matter most.
 4. Daily distribution: Propose tasks for each remaining day this week, organized around the weekly goals.
 5. Calibration: Does this daily breakdown feel realistic?
+
+## Redo behavior
+If an existing plan is provided for this week, open by acknowledging it: note what's already been completed, what's still pending, and ask what prompted the redo (goals changed, plan needs adjustment, etc.). Preserve already-completed tasks in the new plan.
 
 ## Rules
 - Do NOT ask the user to tag, categorize, or estimate durations for tasks
@@ -337,7 +464,7 @@ ${context.profile}
 ${context.currentTodos}
 
 ## Last Week's Results
-${context.previousWeekSummary}`;
+${context.previousWeekSummary}${context.currentWeekContext ? `\n\n## This Week's Existing Plan (Redo)\n${context.currentWeekContext}` : ''}`;
 
     const conversationLines = messages.map(m =>
       m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`

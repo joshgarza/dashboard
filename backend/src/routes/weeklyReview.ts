@@ -7,6 +7,7 @@ import {
   toggleTask,
   streamInterview,
   generatePlan,
+  updateProfileAfterReview,
 } from '../services/weeklyReviewService.js';
 
 const router = Router();
@@ -78,6 +79,8 @@ router.post('/weekly-review/finalize', async (req: Request, res: Response, next:
 
     const plan = await generatePlan(messages);
     res.json({ success: true, data: plan });
+    // Fire-and-forget: update learning profile in background
+    updateProfileAfterReview(messages, plan);
   } catch (err) {
     next(err);
   }

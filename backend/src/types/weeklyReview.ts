@@ -53,5 +53,6 @@ export interface InterviewStatus {
 export interface WeeklyContext {
   currentTodos: string;
   previousWeekSummary: string;
+  currentWeekContext: string; // non-empty when a plan already exists for this week (redo case)
   profile: string;
 }
