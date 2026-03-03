@@ -50,6 +50,13 @@ function getCurrentWeekString(): string {
   return `${now.getFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+function getWeekStringForDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day, 12, 0, 0);
+  const week = getISOWeek(date);
+  return `${date.getFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
 function getPreviousWeekString(): string {
   const now = getNowInPT();
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -161,9 +168,23 @@ export function getWeeklyGoals(): string[] {
   return plan.weeklyGoals;
 }
 
+export function getPlanForDate(dateStr: string): DailyPlan | null {
+  const week = getWeekStringForDate(dateStr);
+  const plan = loadPlanFromDb(week);
+  if (!plan) return null;
+  return plan.days[dateStr] || null;
+}
+
+export function getWeeklyGoalsForDate(dateStr: string): string[] {
+  const week = getWeekStringForDate(dateStr);
+  const plan = loadPlanFromDb(week);
+  if (!plan) return [];
+  return plan.weeklyGoals;
+}
+
 export function toggleTask(dateStr: string, taskIndex: number): DailyTask {
   const db = getHopperDb();
-  const week = getCurrentWeekString();
+  const week = getWeekStringForDate(dateStr);
 
   const planRow = db
     .prepare('SELECT id FROM svc_weekly_review_plans WHERE week = ?')

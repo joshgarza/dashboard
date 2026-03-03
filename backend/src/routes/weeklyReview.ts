@@ -4,6 +4,8 @@ import {
   getTodayPlan,
   getWeeklyGoals,
   getTodayDateString,
+  getPlanForDate,
+  getWeeklyGoalsForDate,
   toggleTask,
   streamInterview,
   generatePlan,
@@ -40,6 +42,42 @@ router.post('/weekly-review/today/:index/toggle', async (req: Request, res: Resp
     }
 
     const task = toggleTask(getTodayDateString(), index);
+    res.json({ success: true, data: task });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/weekly-review/day/:date', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const date = req.params.date as string;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.status(400).json({ success: false, error: 'Invalid date format. Use YYYY-MM-DD' });
+      return;
+    }
+    const plan = getPlanForDate(date);
+    const goals = getWeeklyGoalsForDate(date);
+    const today = getTodayDateString();
+    res.json({ success: true, data: { plan, goals, today } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/weekly-review/day/:date/:index/toggle', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const date = req.params.date as string;
+    const indexStr = req.params.index as string;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      res.status(400).json({ success: false, error: 'Invalid date format. Use YYYY-MM-DD' });
+      return;
+    }
+    const index = parseInt(indexStr, 10);
+    if (isNaN(index)) {
+      res.status(400).json({ success: false, error: 'Invalid task index' });
+      return;
+    }
+    const task = toggleTask(date, index);
     res.json({ success: true, data: task });
   } catch (err) {
     next(err);

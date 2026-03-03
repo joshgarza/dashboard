@@ -15,6 +15,20 @@ jest.unstable_mockModule('react-router-dom', () => ({
 
 const { TodayTodos } = await import('./TodayTodos');
 
+// Compute today's date the same way the component does, so URLs match.
+const now = new Date();
+const TEST_TODAY = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+function addDays(dateStr: string, n: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, month - 1, day, 12, 0, 0);
+  date.setDate(date.getDate() + n);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 const mockTodayData = {
   plan: {
     focus: 'Admin catch-up day',
@@ -25,6 +39,7 @@ const mockTodayData = {
     ],
   },
   goals: ['Clear admin backlog', 'Claude tooling setup'],
+  today: TEST_TODAY,
 };
 
 describe('TodayTodos', () => {
@@ -133,7 +148,9 @@ describe('TodayTodos', () => {
     fireEvent.click(screen.getByText('Print POD permits'));
 
     await waitFor(() => {
-      expect(calls).toContainEqual('POST http://localhost:3001/api/weekly-review/today/0/toggle');
+      expect(calls).toContainEqual(
+        `POST http://localhost:3001/api/weekly-review/day/${TEST_TODAY}/0/toggle`
+      );
     });
   });
 
@@ -147,6 +164,7 @@ describe('TodayTodos', () => {
         ],
       },
       goals: ['Clear admin backlog'],
+      today: TEST_TODAY,
     };
 
     let callCount = 0;
@@ -216,6 +234,122 @@ describe('TodayTodos', () => {
     await waitFor(() => {
       expect(screen.getByText('Focus: Admin catch-up day')).toBeInTheDocument();
       expect(screen.getByText(/Clear admin backlog/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows "Today" label in nav strip', async () => {
+    let callCount = 0;
+    globalThis.fetch = (() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: { needed: false, week: '2026-W08' },
+          }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: mockTodayData }),
+      } as Response);
+    }) as typeof fetch;
+
+    render(<TodayTodos />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Today')).toBeInTheDocument();
+    });
+  });
+
+  it('navigates to next day and fetches new plan', async () => {
+    const tomorrowDate = addDays(TEST_TODAY, 1);
+    const tomorrowData = {
+      plan: {
+        focus: 'Planning day',
+        tasks: [{ text: 'Future task', source: '- [ ] Future task', completed: false }],
+      },
+      goals: ['Clear admin backlog'],
+      today: TEST_TODAY,
+    };
+
+    let callCount = 0;
+    const calls: string[] = [];
+    globalThis.fetch = ((url: string, opts?: RequestInit) => {
+      calls.push(`${opts?.method || 'GET'} ${url}`);
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: { needed: false, week: '2026-W08' } }),
+        } as Response);
+      }
+      if (callCount === 2) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: mockTodayData }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: tomorrowData }),
+      } as Response);
+    }) as typeof fetch;
+
+    render(<TodayTodos />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Print POD permits')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next day' }));
+
+    await waitFor(() => {
+      expect(calls).toContainEqual(
+        `GET http://localhost:3001/api/weekly-review/day/${tomorrowDate}`
+      );
+    });
+  });
+
+  it('shows "Back to today" button after navigating away', async () => {
+    const nextDayData = {
+      plan: null,
+      goals: [],
+      today: TEST_TODAY,
+    };
+
+    let callCount = 0;
+    globalThis.fetch = (() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: { needed: false, week: '2026-W08' } }),
+        } as Response);
+      }
+      if (callCount === 2) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: mockTodayData }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: nextDayData }),
+      } as Response);
+    }) as typeof fetch;
+
+    render(<TodayTodos />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Print POD permits')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next day' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Back to today')).toBeInTheDocument();
     });
   });
 });
