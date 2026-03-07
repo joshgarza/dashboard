@@ -90,7 +90,7 @@ function App() {
               </ErrorBoundary>
             } />
             <Route path="/research" element={
-              <div className="px-4 py-4 flex-1 flex flex-col">
+              <div className="flex-1 flex flex-col">
                 <ErrorBoundary>
                   <ResearchChat />
                 </ErrorBoundary>

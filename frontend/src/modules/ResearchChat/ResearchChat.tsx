@@ -1,40 +1,35 @@
-import { useState } from 'react';
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect } from 'react';
+import { config } from '@/config';
 import { ChatView } from './ChatView.tsx';
-import { EnqueueForm } from './EnqueueForm.tsx';
-
-type Tab = 'chat' | 'enqueue';
+import type { ResearchFileInfo } from './types.ts';
 
 export function ResearchChat() {
-  const [activeTab, setActiveTab] = useState<Tab>('chat');
+  const [files, setFiles] = useState<ResearchFileInfo[]>([]);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+  const [filesLoading, setFilesLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${config.apiBaseUrl}/api/research/files`)
+      .then(res => res.json())
+      .then(json => {
+        if (json.success) {
+          setFiles(json.data);
+        }
+        setFilesLoading(false);
+      })
+      .catch(() => {
+        setFilesLoading(false);
+      });
+  }, []);
 
   return (
-    <Card className="flex-1 flex flex-col">
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle>Research Assistant</CardTitle>
-          <div className="flex gap-1">
-            <Button
-              variant={activeTab === 'chat' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setActiveTab('chat')}
-            >
-              Chat
-            </Button>
-            <Button
-              variant={activeTab === 'enqueue' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setActiveTab('enqueue')}
-            >
-              Enqueue
-            </Button>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="flex-1 flex flex-col overflow-hidden">
-        {activeTab === 'chat' ? <ChatView /> : <EnqueueForm />}
-      </CardContent>
-    </Card>
+    <div className="flex-1 flex flex-col min-h-0">
+      <ChatView
+        files={files}
+        selectedFiles={selectedFiles}
+        onSelectFiles={setSelectedFiles}
+        filesLoading={filesLoading}
+      />
+    </div>
   );
 }

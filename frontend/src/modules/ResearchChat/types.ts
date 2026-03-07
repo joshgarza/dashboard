@@ -11,14 +11,3 @@ export interface ResearchFileInfo {
   date: string;
   tags: string[];
 }
-
-export interface QueueItem {
-  id: string;
-  topic: string;
-  description: string;
-  tags: string[];
-  priority: number;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'review';
-  added: string;
-  model: 'sonnet' | 'opus' | 'haiku';
-}

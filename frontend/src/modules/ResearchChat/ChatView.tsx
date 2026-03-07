@@ -1,50 +1,39 @@
-import { useState, useEffect, useRef } from 'react';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { config } from '@/config';
+import { ContextFilesPopover } from './ContextFilesPopover.tsx';
 import type { ChatMessage, ResearchFileInfo } from './types.ts';
 
-export function ChatView() {
-  const [files, setFiles] = useState<ResearchFileInfo[]>([]);
-  const [filesLoading, setFilesLoading] = useState(true);
-  const [filesError, setFilesError] = useState<string | null>(null);
+interface ChatViewProps {
+  files: ResearchFileInfo[];
+  selectedFiles: string[];
+  onSelectFiles: (files: string[]) => void;
+  filesLoading: boolean;
+}
 
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
+export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    fetch(`${config.apiBaseUrl}/api/research/files`)
-      .then(res => res.json())
-      .then(json => {
-        if (json.success) {
-          setFiles(json.data);
-        } else {
-          const msg = typeof json.error === 'object' ? json.error?.message : json.error;
-          setFilesError(msg || 'Failed to load files');
-        }
-        setFilesLoading(false);
-      })
-      .catch(() => {
-        setFilesError('Failed to load research files');
-        setFilesLoading(false);
-      });
-  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const selected = Array.from(e.target.selectedOptions, opt => opt.value);
-    if (selected.length <= 3) {
-      setSelectedFiles(selected);
-    }
-  }
+  const resizeTextarea = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    const maxHeight = 6 * 24; // ~6 rows
+    ta.style.height = Math.min(ta.scrollHeight, maxHeight) + 'px';
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [input, resizeTextarea]);
 
   async function handleSend() {
     const trimmed = input.trim();
@@ -142,96 +131,127 @@ export function ChatView() {
     }
   }
 
-  const researchFiles = files.filter(f => f.type === 'research');
-  const principleFiles = files.filter(f => f.type === 'principles');
+  function removeFile(key: string) {
+    onSelectFiles(selectedFiles.filter(k => k !== key));
+  }
+
+  const selectedFileInfos = selectedFiles
+    .map(key => files.find(f => f.key === key))
+    .filter(Boolean) as ResearchFileInfo[];
 
   return (
-    <div className="flex-1 flex flex-col gap-3">
-      {filesLoading ? (
-        <Skeleton className="h-8 w-full" />
-      ) : filesError ? (
-        <div className="text-destructive text-sm">{filesError}</div>
-      ) : (
-        <div className="space-y-1">
-          <label className="text-sm font-medium leading-none">
-            Context files{' '}
-            <span className="text-muted-foreground font-normal">(select up to 3)</span>
-          </label>
-          <select
-            multiple
-            value={selectedFiles}
-            onChange={handleSelectChange}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-            size={4}
-          >
-            {researchFiles.length > 0 && (
-              <optgroup label="Research">
-                {researchFiles.map(f => (
-                  <option key={f.key} value={f.key}>
-                    {f.date} — {f.topic}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {principleFiles.length > 0 && (
-              <optgroup label="Principles">
-                {principleFiles.map(f => (
-                  <option key={f.key} value={f.key}>
-                    {f.topic}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </div>
-      )}
-
-      <div className="rounded-md border bg-muted/30 overflow-y-auto flex-1 min-h-0 p-3 space-y-2">
-        {messages.length === 0 ? (
-          <div className="text-sm text-muted-foreground text-center py-8">
-            Ask a question about your research...
-          </div>
-        ) : (
-          messages.map((msg, i) => (
-            <div
-              key={i}
-              className={
-                msg.role === 'user'
-                  ? 'flex justify-end'
-                  : 'flex justify-start'
-              }
-            >
-              <div
-                className={
-                  msg.role === 'user'
-                    ? 'bg-primary text-primary-foreground rounded-lg px-3 py-2 max-w-[80%] text-sm'
-                    : 'bg-muted rounded-lg px-3 py-2 max-w-[80%] text-sm whitespace-pre-wrap'
-                }
-              >
-                {msg.content}
-                {msg.role === 'assistant' && streaming && i === messages.length - 1 && (
-                  <span className="inline-block w-1.5 h-4 bg-foreground/70 ml-0.5 animate-pulse" />
-                )}
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto w-full px-4 py-4">
+          {messages.length === 0 ? (
+            <div className="flex items-center justify-center h-full min-h-[50vh]">
+              <div className="text-center space-y-2">
+                <p className="text-lg text-muted-foreground">What would you like to research?</p>
+                <p className="text-sm text-muted-foreground/60">
+                  Attach context files for grounded answers
+                </p>
               </div>
             </div>
-          ))
-        )}
-        <div ref={messagesEndRef} />
+          ) : (
+            <div className="space-y-4 py-4">
+              {messages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
+                >
+                  <div
+                    className={
+                      msg.role === 'user'
+                        ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-2.5 max-w-[85%] text-sm'
+                        : 'text-foreground max-w-[85%] text-sm whitespace-pre-wrap'
+                    }
+                  >
+                    {msg.content}
+                    {msg.role === 'assistant' && streaming && i === messages.length - 1 && (
+                      <span className="inline-block w-1.5 h-4 bg-foreground/70 ml-0.5 animate-pulse" />
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex gap-2">
-        <textarea
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask about your research..."
-          disabled={streaming}
-          rows={1}
-          className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none disabled:opacity-50"
-        />
-        <Button size="sm" onClick={handleSend} disabled={streaming || !input.trim()}>
-          {streaming ? 'Sending...' : 'Send'}
-        </Button>
+      {/* Input area */}
+      <div className="bg-background pb-[env(safe-area-inset-bottom)]">
+        <div className="max-w-3xl mx-auto w-full px-3 sm:px-6 pt-2 pb-4">
+          {selectedFileInfos.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2 px-1">
+              {selectedFileInfos.map(f => (
+                <span
+                  key={f.key}
+                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground"
+                >
+                  {f.topic}
+                  <button
+                    type="button"
+                    onClick={() => removeFile(f.key)}
+                    className="hover:text-foreground ml-0.5"
+                  >
+                    &times;
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="rounded-2xl border border-input bg-muted/30 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 ring-offset-background">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask about your research..."
+              disabled={streaming}
+              rows={1}
+              className="w-full bg-transparent px-4 pt-3 pb-1 text-base sm:text-sm resize-none focus:outline-none disabled:opacity-50 overflow-y-auto placeholder:text-muted-foreground"
+              style={{ maxHeight: '144px' }}
+            />
+            <div className="flex items-center justify-between px-2 pb-2">
+              <ContextFilesPopover
+                files={files}
+                selectedFiles={selectedFiles}
+                onSelectFiles={onSelectFiles}
+                filesLoading={filesLoading}
+              />
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={streaming || !input.trim()}
+                className="h-8 w-8 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-30 hover:bg-primary/90 transition-colors"
+              >
+                {streaming ? (
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14" />
+                    <path d="m12 5 7 7-7 7" />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
