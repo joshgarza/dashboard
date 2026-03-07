@@ -8,10 +8,17 @@ interface ChatViewProps {
   selectedFiles: string[];
   onSelectFiles: (files: string[]) => void;
   filesLoading: boolean;
+  onNewChat: () => void;
 }
 
-export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading }: ChatViewProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, onNewChat }: ChatViewProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const stored = localStorage.getItem('research-messages');
+    if (stored) {
+      try { return JSON.parse(stored); } catch { return []; }
+    }
+    return [];
+  });
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
 
@@ -21,6 +28,10 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading }: 
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
+    localStorage.setItem('research-messages', JSON.stringify(messages));
   }, [messages]);
 
   const resizeTextarea = useCallback(() => {
@@ -56,8 +67,9 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading }: 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          message: trimmed,
+          messages,
           files: selectedFiles,
-          messages: updatedMessages,
         }),
         signal: controller.signal,
       });
@@ -221,6 +233,29 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading }: 
                 onSelectFiles={onSelectFiles}
                 filesLoading={filesLoading}
               />
+              <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => { setMessages([]); onNewChat(); }}
+                disabled={streaming}
+                title="New chat"
+                className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground flex items-center justify-center disabled:opacity-30 hover:bg-muted transition-colors"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+              </button>
               <button
                 type="button"
                 onClick={handleSend}
@@ -249,6 +284,7 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading }: 
                   </svg>
                 )}
               </button>
+              </div>
             </div>
           </div>
         </div>

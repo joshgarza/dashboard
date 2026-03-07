@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { config } from '@/config';
 import { ChatView } from './ChatView.tsx';
 import type { ResearchFileInfo } from './types.ts';
@@ -22,6 +22,10 @@ export function ResearchChat() {
       });
   }, []);
 
+  const handleNewChat = useCallback(() => {
+    localStorage.removeItem('research-messages');
+  }, []);
+
   return (
     <div className="flex-1 flex flex-col min-h-0">
       <ChatView
@@ -29,6 +33,7 @@ export function ResearchChat() {
         selectedFiles={selectedFiles}
         onSelectFiles={setSelectedFiles}
         filesLoading={filesLoading}
+        onNewChat={handleNewChat}
       />
     </div>
   );

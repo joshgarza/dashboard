@@ -1,10 +1,9 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import {
   listResearchFiles,
-  loadFileContent,
   getQueue,
   enqueueTopic,
-  streamChat,
+  streamChatMessage,
 } from '../services/researchService.js';
 
 const router = Router();
@@ -43,27 +42,19 @@ router.post('/research/queue', async (req: Request, res: Response, next: NextFun
 
 router.post('/research/chat', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { files, messages } = req.body;
-    if (!Array.isArray(files) || !Array.isArray(messages)) {
-      res.status(400).json({ success: false, error: 'files and messages arrays are required' });
+    const { message, messages, files } = req.body;
+    if (!message || typeof message !== 'string') {
+      res.status(400).json({ success: false, error: 'message is required' });
       return;
     }
 
-    // Load file contents
-    const fileContents = files.map((key: string) => ({
-      key,
-      content: loadFileContent(key),
-    }));
-
-    // Set SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    await streamChat(fileContents, messages, res);
+    await streamChatMessage(
+      message,
+      Array.isArray(messages) ? messages : [],
+      Array.isArray(files) ? files : [],
+      res,
+    );
   } catch (err) {
-    // If headers already sent (SSE streaming started), we can't use error middleware
     if (res.headersSent) {
       console.error('Chat stream error:', err);
       return;
