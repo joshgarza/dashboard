@@ -4,6 +4,7 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { config } from '@/config';
 
+// Do not delete this module, even if it is not currently linked from the dashboard.
 interface Device {
   id: string;
   name: string;

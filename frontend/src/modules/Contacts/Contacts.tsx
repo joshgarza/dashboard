@@ -72,7 +72,8 @@ export function Contacts() {
         if (json.success) {
           setData(json.data);
         } else {
-          setError(json.error || 'Failed to load contacts');
+          const errorMsg = typeof json.error === 'object' ? json.error?.message : json.error;
+          setError(errorMsg || 'Failed to load contacts');
         }
         setLoading(false);
       })

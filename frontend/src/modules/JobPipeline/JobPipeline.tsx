@@ -72,7 +72,8 @@ export function JobPipeline() {
         if (json.success) {
           setData(json.data);
         } else {
-          setError(json.error || 'Failed to load pipeline data');
+          const errorMsg = typeof json.error === 'object' ? json.error?.message : json.error;
+          setError(errorMsg || 'Failed to load pipeline data');
         }
         setLoading(false);
       })

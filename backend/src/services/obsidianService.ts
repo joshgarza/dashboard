@@ -8,14 +8,15 @@ interface WeeklyTodoSummary {
   weekOf: string;
 }
 
-const VAULT_PATH = '/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault';
+const DEFAULT_VAULT_PATH = '/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault';
 
 export function getCurrentWeekNote(): WeeklyTodoSummary {
   const now = new Date();
   const year = now.getFullYear();
   const week = getISOWeek(now);
   const noteTitle = `${year} Week ${String(week).padStart(2, '0')}`;
-  const filePath = path.join(VAULT_PATH, `${noteTitle}.md`);
+  const vaultPath = process.env.OBSIDIAN_VAULT_PATH || DEFAULT_VAULT_PATH;
+  const filePath = path.join(vaultPath, `${noteTitle}.md`);
 
   if (!fs.existsSync(filePath)) {
     throw new Error(`Weekly note not found: ${noteTitle}.md`);
