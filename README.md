@@ -1,15 +1,14 @@
 # Dashboard
 
-Personal productivity dashboard that aggregates calendar, tasks, weather, system stats, and CRM data into a single interface — with built-in AI tools for research and weekly review.
+Personal productivity dashboard that aggregates calendar, tasks, weather, and CRM data into a single interface, with built-in AI tools for research and weekly review.
 
 ## Features
 
 | Widget | Description |
 |--------|-------------|
 | The Schedule | Today's events from Google Calendar |
-| Today's Plan | Todos pulled from Obsidian |
+| Today's Plan | Todos pulled from the weekly review plan stored in Hopper |
 | Weather & Time | Current conditions via OpenWeatherMap |
-| System Stats | CPU, memory, and disk usage from registered devices |
 | Job Pipeline | Job opportunities by stage from EspoCRM |
 | Research Chat | AI-powered assistant for queuing and exploring research tasks |
 | Weekly Review | Interview-style weekly planning and reflection tool |
@@ -60,8 +59,10 @@ ESPO_URL=http://your-espocrm-host
 ESPO_USER=your_username
 ESPO_PASS=your_password
 OBSIDIAN_VAULT_PATH=/path/to/your/vault
-ANTHROPIC_API_KEY=your_anthropic_key
+CODEX_MODEL=gpt-5.3-codex  # optional
 ```
+
+AI features run through the Codex SDK, which wraps the local Codex CLI. In Docker, backend auth comes from the mounted `~/.codex` directory in `docker-compose.yml`. This path is intended to use your ChatGPT-backed Codex login rather than paid API-key billing.
 
 ### Frontend
 
@@ -71,9 +72,11 @@ VITE_WEATHER_API_KEY=your_openweathermap_key
 VITE_WEATHER_CITY=your_city
 ```
 
+`VITE_WEATHER_CITY` is documented for the intended weather configuration, but the current widget still uses a hardcoded city and needs a follow-up cleanup.
+
 ## Tech Stack
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI
 - **Backend:** Express 5, TypeScript
-- **Integrations:** Google Calendar, EspoCRM, Obsidian, Claude API
+- **Integrations:** Google Calendar, EspoCRM, Obsidian, Hopper DB, Codex SDK
 - **Testing:** Jest, Testing Library, Supertest

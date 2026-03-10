@@ -9,8 +9,7 @@ RUN npm install
 
 COPY . .
 
-RUN mkdir -p /app/data/weekly-plans && chown -R node:node /app/data \
-    && touch /home/node/.claude.json && chown node:node /home/node/.claude.json
+RUN mkdir -p /app/data/weekly-plans && chown -R node:node /app/data
 
 USER node
 

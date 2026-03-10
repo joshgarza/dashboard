@@ -14,7 +14,8 @@ router.get('/todos', async (_req: Request, res: Response, next: NextFunction) =>
 
 router.post('/todos/:thoughtId/complete', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const thoughtId = parseInt(req.params.thoughtId, 10);
+    const thoughtIdParam = req.params.thoughtId as string;
+    const thoughtId = parseInt(thoughtIdParam, 10);
     if (isNaN(thoughtId)) {
       res.status(400).json({ success: false, error: 'Invalid thought ID' });
       return;
@@ -34,7 +35,8 @@ router.post('/todos/:thoughtId/complete', async (req: Request, res: Response, ne
 
 router.post('/todos/:thoughtId/uncomplete', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const thoughtId = parseInt(req.params.thoughtId, 10);
+    const thoughtIdParam = req.params.thoughtId as string;
+    const thoughtId = parseInt(thoughtIdParam, 10);
     if (isNaN(thoughtId)) {
       res.status(400).json({ success: false, error: 'Invalid thought ID' });
       return;

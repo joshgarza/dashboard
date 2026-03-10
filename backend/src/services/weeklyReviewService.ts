@@ -1,10 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
 import type { Response } from 'express';
 import { getHopperDb } from './hopperDb.js';
 import { initWeeklyReviewSchema } from './hopperSchema.js';
 import { completeTodo } from './todoService.js';
+import { runCodexStructuredTask, runCodexTextTask, streamCodexTurn } from './codexProvider.js';
+import { sessionManager } from './sessionManager.js';
 import type {
   WeeklyPlan,
   DailyPlan,
@@ -418,37 +419,15 @@ Update the profile YAML based on evidence from this conversation. You MUST:
 
 Return ONLY valid YAML with the exact same top-level structure as the current profile. No explanation, no markdown fences.`;
 
-  const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
-
-  const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'json', '--model', 'claude-opus-4-6'], {
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  let stdout = '';
-  child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-  child.stderr.on('data', (chunk: Buffer) => {
-    console.error('[profile-update stderr]', chunk.toString());
-  });
-
-  child.on('close', (code) => {
-    if (code !== 0) {
-      console.error('[profile-update] claude exited with code', code);
-      return;
-    }
+  void (async () => {
     try {
-      const wrapper = JSON.parse(stdout);
-      let yaml = typeof wrapper.result === 'string' ? wrapper.result : stdout;
+      let yaml = await runCodexTextTask(prompt);
       yaml = yaml.replace(/^```(?:yaml)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
       if (yaml) updateProfile(yaml);
     } catch (err) {
-      console.error('[profile-update] failed to parse output:', (err as Error).message);
+      console.error('[profile-update] codex failed:', (err as Error).message);
     }
-  });
-
-  child.on('error', (err) => {
-    console.error('[profile-update] spawn error:', err.message);
-  });
+  })();
 }
 
 // ── Agent prompts ─────────────────────────────────────────────────────────────
@@ -501,14 +480,18 @@ function executeActions(fullText: string): void {
   }
 }
 
-export function streamInterview(
-  messages: ChatMessage[],
-  res: Response,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const context = getWeeklyContext();
+function getLatestUserMessage(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      return messages[i].content;
+    }
+  }
+  throw new Error('No user message found');
+}
 
-    const systemBlock = `${INTERVIEW_SYSTEM_PROMPT}
+function buildInterviewPrompt(messages: ChatMessage[], hasActiveSession: boolean): string {
+  const context = getWeeklyContext();
+  const systemBlock = `${INTERVIEW_SYSTEM_PROMPT}
 
 ## User Profile
 ${context.profile}
@@ -519,93 +502,37 @@ ${context.currentTodos}
 ## Last Week's Results
 ${context.previousWeekSummary}${context.currentWeekContext ? `\n\n## This Week's Existing Plan (Redo)\n${context.currentWeekContext}` : ''}`;
 
-    const conversationLines = messages.map(m =>
-      m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`
-    );
+  if (hasActiveSession) {
+    const latestUserMessage = getLatestUserMessage(messages);
+    return `${systemBlock}\n\nContinue the ongoing weekly review. The user's latest message is:\nHuman: ${latestUserMessage}`;
+  }
 
-    const prompt = `${systemBlock}\n\n${conversationLines.join('\n\n')}`;
+  const conversationLines = messages.map(m =>
+    m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`
+  );
 
-    const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
+  return `${systemBlock}\n\n${conversationLines.join('\n\n')}`;
+}
 
-    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--model', 'claude-opus-4-6'], {
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+export function streamInterview(
+  messages: ChatMessage[],
+  sessionId: string | null,
+  res: Response,
+): Promise<void> {
+  const hasActiveSession = !!(sessionId && sessionManager.get(sessionId, 'weekly-review'));
+  const prompt = buildInterviewPrompt(messages, hasActiveSession);
 
-    let buffer = '';
-    let fullResponseText = '';
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-          if (event.type === 'assistant' && event.message?.content) {
-            const raw = event.message.content
-              .map((b: { text?: string }) => b.text || '')
-              .join('');
-            if (raw) {
-              fullResponseText += raw;
-              const text = stripActionTags(raw);
-              if (text) {
-                res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
-              }
-            }
-          }
-        } catch {
-          // skip malformed lines
-        }
-      }
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      console.error('[claude stderr]', chunk.toString());
-    });
-
-    child.on('close', (code) => {
-      if (buffer.trim()) {
-        try {
-          const event = JSON.parse(buffer);
-          if (event.type === 'assistant' && event.subtype === 'text') {
-            fullResponseText += event.text;
-            const text = stripActionTags(event.text);
-            if (text) {
-              res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      // Execute any action tags accumulated over the full response
+  return streamCodexTurn({
+    kind: 'weekly-review',
+    sessionId,
+    input: prompt,
+    response: res,
+    transformText: stripActionTags,
+    onComplete: (fullResponseText) => {
       if (fullResponseText) {
         executeActions(fullResponseText);
       }
-
-      res.write(`data: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-      res.end();
-      if (code !== 0) {
-        reject(new Error(`claude exited with code ${code}`));
-      } else {
-        resolve();
-      }
-    });
-
-    child.on('error', (err) => {
-      res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text: `Error: ${err.message}` })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-      res.end();
-      reject(err);
-    });
-
-    res.on('close', () => {
-      if (!child.killed) child.kill();
-    });
+    },
   });
 }
 
@@ -639,10 +566,59 @@ Rules:
 - Keep max 5 tasks per day unless the user specifically requested more
 - Respect any preferences expressed in the conversation`;
 
+const WEEKLY_PLAN_OUTPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    weeklyGoals: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    days: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          focus: { type: 'string' },
+          tasks: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                thought_id: {
+                  anyOf: [
+                    { type: 'integer' },
+                    { type: 'null' },
+                  ],
+                },
+                completed: { type: 'boolean' },
+              },
+              required: ['text', 'thought_id', 'completed'],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ['focus', 'tasks'],
+        additionalProperties: false,
+      },
+    },
+    unscheduled: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+    dropped: {
+      type: 'array',
+      items: { type: 'string' },
+    },
+  },
+  required: ['weeklyGoals', 'days', 'unscheduled', 'dropped'],
+  additionalProperties: false,
+} as const;
+
 export function generatePlan(
   messages: ChatMessage[],
 ): Promise<WeeklyPlan> {
-  return new Promise((resolve, reject) => {
+  return (async () => {
     const context = getWeeklyContext();
     const week = getCurrentWeekString();
 
@@ -662,65 +638,19 @@ Today's date is ${getTodayDateString()}. The current week is ${week}.
 
 Generate the JSON plan now:`;
 
-    const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
+    const text = await runCodexStructuredTask(prompt, WEEKLY_PLAN_OUTPUT_SCHEMA);
+    const planData = JSON.parse(text);
 
-    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'json', '--model', 'claude-opus-4-6'], {
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const plan: WeeklyPlan = {
+      week,
+      interviewedAt: new Date().toISOString(),
+      weeklyGoals: planData.weeklyGoals || [],
+      days: planData.days || {},
+      unscheduled: planData.unscheduled || [],
+      dropped: planData.dropped || [],
+    };
 
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(`claude exited with code ${code}: ${stderr}`));
-        return;
-      }
-
-      try {
-        const wrapper = JSON.parse(stdout);
-        let text = '';
-        if (wrapper.result) {
-          text = wrapper.result;
-        } else if (Array.isArray(wrapper)) {
-          text = wrapper.map((b: { text?: string }) => b.text || '').join('');
-        } else if (typeof wrapper === 'string') {
-          text = wrapper;
-        } else {
-          text = stdout;
-        }
-
-        text = text.replace(/^```(?:json)?\s*\n?/m, '').replace(/\n?```\s*$/m, '').trim();
-
-        const planData = JSON.parse(text);
-
-        const plan: WeeklyPlan = {
-          week,
-          interviewedAt: new Date().toISOString(),
-          weeklyGoals: planData.weeklyGoals || [],
-          days: planData.days || {},
-          unscheduled: planData.unscheduled || [],
-          dropped: planData.dropped || [],
-        };
-
-        savePlan(plan);
-        resolve(plan);
-      } catch (err) {
-        reject(new Error(`Failed to parse plan JSON: ${(err as Error).message}\nRaw output: ${stdout.slice(0, 500)}`));
-      }
-    });
-
-    child.on('error', (err) => {
-      reject(err);
-    });
-  });
+    savePlan(plan);
+    return plan;
+  })();
 }

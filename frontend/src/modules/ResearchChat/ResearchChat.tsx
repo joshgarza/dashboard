@@ -24,6 +24,7 @@ export function ResearchChat() {
 
   const handleNewChat = useCallback(() => {
     localStorage.removeItem('research-messages');
+    localStorage.removeItem('research-session-id');
   }, []);
 
   return (

@@ -42,7 +42,7 @@ router.post('/research/queue', async (req: Request, res: Response, next: NextFun
 
 router.post('/research/chat', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { message, messages, files } = req.body;
+    const { message, messages, files, sessionId } = req.body;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ success: false, error: 'message is required' });
       return;
@@ -52,6 +52,7 @@ router.post('/research/chat', async (req: Request, res: Response, next: NextFunc
       message,
       Array.isArray(messages) ? messages : [],
       Array.isArray(files) ? files : [],
+      typeof sessionId === 'string' ? sessionId : null,
       res,
     );
   } catch (err) {

@@ -3,6 +3,8 @@ import { config } from '@/config';
 import { ContextFilesPopover } from './ContextFilesPopover.tsx';
 import type { ChatMessage, ResearchFileInfo } from './types.ts';
 
+type StreamPhase = 'thinking' | 'working' | 'writing' | null;
+
 interface ChatViewProps {
   files: ResearchFileInfo[];
   selectedFiles: string[];
@@ -19,12 +21,15 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
     }
     return [];
   });
+  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem('research-session-id'));
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<StreamPhase>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const workingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -33,6 +38,36 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
   useEffect(() => {
     localStorage.setItem('research-messages', JSON.stringify(messages));
   }, [messages]);
+
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem('research-session-id', sessionId);
+      return;
+    }
+
+    localStorage.removeItem('research-session-id');
+  }, [sessionId]);
+
+  const clearWorkingTimer = useCallback(() => {
+    if (workingTimerRef.current !== null) {
+      window.clearTimeout(workingTimerRef.current);
+      workingTimerRef.current = null;
+    }
+  }, []);
+
+  const beginStreamPhases = useCallback(() => {
+    clearWorkingTimer();
+    setStreamPhase('thinking');
+    workingTimerRef.current = window.setTimeout(() => {
+      setStreamPhase((current) => current === 'thinking' ? 'working' : current);
+    }, 1500);
+  }, [clearWorkingTimer]);
+
+  useEffect(() => {
+    return () => {
+      clearWorkingTimer();
+    };
+  }, [clearWorkingTimer]);
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
@@ -55,6 +90,7 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
     setMessages(updatedMessages);
     setInput('');
     setStreaming(true);
+    beginStreamPhases();
 
     const assistantMessage: ChatMessage = { role: 'assistant', content: '' };
     setMessages([...updatedMessages, assistantMessage]);
@@ -70,6 +106,7 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
           message: trimmed,
           messages,
           files: selectedFiles,
+          sessionId,
         }),
         signal: controller.signal,
       });
@@ -104,7 +141,11 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
 
           try {
             const parsed = JSON.parse(payload);
-            if (parsed.type === 'content_block_delta' && parsed.text) {
+            if (parsed.type === 'session_id' && typeof parsed.sessionId === 'string') {
+              setSessionId(parsed.sessionId);
+            } else if (parsed.type === 'content_block_delta' && parsed.text) {
+              clearWorkingTimer();
+              setStreamPhase('writing');
               setMessages(prev => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
@@ -132,6 +173,8 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
       }
     } finally {
       abortRef.current = null;
+      clearWorkingTimer();
+      setStreamPhase(null);
       setStreaming(false);
     }
   }
@@ -150,6 +193,12 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
   const selectedFileInfos = selectedFiles
     .map(key => files.find(f => f.key === key))
     .filter(Boolean) as ResearchFileInfo[];
+  const activeAssistantIndex = streaming ? messages.length - 1 : -1;
+  const streamStatus = streamPhase === 'working'
+    ? 'Working...'
+    : streamPhase === 'writing'
+      ? 'Writing...'
+      : 'Thinking...';
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -168,10 +217,7 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
           ) : (
             <div className="space-y-4 py-4">
               {messages.map((msg, i) => (
-                <div
-                  key={i}
-                  className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
-                >
+                <div key={i} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                   <div
                     className={
                       msg.role === 'user'
@@ -179,8 +225,14 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
                         : 'text-foreground max-w-[85%] text-sm whitespace-pre-wrap'
                     }
                   >
+                    {msg.role === 'assistant' && i === activeAssistantIndex && (
+                      <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+                        <span>{streamStatus}</span>
+                      </div>
+                    )}
                     {msg.content}
-                    {msg.role === 'assistant' && streaming && i === messages.length - 1 && (
+                    {msg.role === 'assistant' && i === activeAssistantIndex && (
                       <span className="inline-block w-1.5 h-4 bg-foreground/70 ml-0.5 animate-pulse" />
                     )}
                   </div>
@@ -236,8 +288,9 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
               <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => { setMessages([]); onNewChat(); }}
+                onClick={() => { clearWorkingTimer(); setMessages([]); setSessionId(null); setStreamPhase(null); onNewChat(); }}
                 disabled={streaming}
+                aria-label="New chat"
                 title="New chat"
                 className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground flex items-center justify-center disabled:opacity-30 hover:bg-muted transition-colors"
               >
@@ -260,6 +313,7 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
                 type="button"
                 onClick={handleSend}
                 disabled={streaming || !input.trim()}
+                aria-label={streaming ? streamStatus : 'Send message'}
                 className="h-8 w-8 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-30 hover:bg-primary/90 transition-colors"
               >
                 {streaming ? (

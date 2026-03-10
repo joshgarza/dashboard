@@ -86,18 +86,13 @@ router.post('/weekly-review/day/:date/:index/toggle', async (req: Request, res: 
 
 router.post('/weekly-review/interview', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { messages } = req.body;
+    const { messages, sessionId } = req.body;
     if (!Array.isArray(messages)) {
       res.status(400).json({ success: false, error: 'messages array is required' });
       return;
     }
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    await streamInterview(messages, res);
+    await streamInterview(messages, typeof sessionId === 'string' ? sessionId : null, res);
   } catch (err) {
     if (res.headersSent) {
       console.error('Interview stream error:', err);

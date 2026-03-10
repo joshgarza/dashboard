@@ -1,8 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
 import type { Response } from 'express';
 import { getHopperDb } from './hopperDb.js';
+import { streamCodexTurn } from './codexProvider.js';
+import { sessionManager } from './sessionManager.js';
 
 const RESEARCH_PATH = process.env.RESEARCH_PATH || '/home/josh/coding/claude/research';
 const KEY_PATTERN = /^(research|principles)\/[a-zA-Z0-9._-]+\.md$/;
@@ -213,114 +214,32 @@ export function streamChatMessage(
   message: string,
   messages: ChatMessage[],
   fileKeys: string[],
+  sessionId: string | null,
   res: Response,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const fileContents = fileKeys.map(key => ({
-      key,
-      content: loadFileContent(key),
-    }));
+  const hasActiveSession = !!(sessionId && sessionManager.get(sessionId, 'research'));
+  const fileContents = fileKeys.map(key => ({
+    key,
+    content: loadFileContent(key),
+  }));
 
-    const fileContext = fileContents
-      .map(f => `--- ${f.key} ---\n${f.content}`)
-      .join('\n\n');
+  const fileContext = fileContents
+    .map(f => `--- ${f.key} ---\n${f.content}`)
+    .join('\n\n');
 
-    const systemBlock = `You are a research assistant. Answer questions, synthesize information, and help the user explore their research.\n\n${fileContext}`;
+  const systemBlock = `You are a research assistant. Answer questions, synthesize information, and help the user explore their research.\n\n${fileContext}`;
+  const history = [...messages, { role: 'user' as const, content: message }]
+    .map(m => m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`)
+    .join('\n\n');
 
-    // Build conversation history + new message into a single prompt
-    const conversationLines = [...messages, { role: 'user' as const, content: message }]
-      .map(m => m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`);
+  const prompt = hasActiveSession
+    ? `${systemBlock}\n\nContinue the ongoing conversation. The user's latest message is:\nHuman: ${message}`
+    : `${systemBlock}\n\n${history}`;
 
-    const prompt = `${systemBlock}\n\n${conversationLines.join('\n\n')}`;
-
-    const claudeBin = path.resolve(import.meta.dirname, '../../node_modules/.bin/claude');
-    const env = { ...process.env };
-    delete env.CLAUDECODE;
-
-    const child = spawn(claudeBin, ['-p', prompt, '--output-format', 'stream-json', '--verbose'], {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    // Set up SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    let buffer = '';
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const event = JSON.parse(line);
-
-          if (event.type === 'assistant' && event.message?.content) {
-            const text = event.message.content
-              .map((b: { text?: string }) => b.text || '')
-              .join('');
-            if (text) {
-              res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
-            }
-          }
-
-          if (event.type === 'result') {
-            // If no assistant event was received, use the result text
-            if (event.result && typeof event.result === 'string') {
-              // result.result contains the full text, but we may have already sent it
-              // via the assistant event above. Only send if we haven't sent anything yet.
-            }
-          }
-        } catch {
-          // skip malformed lines
-        }
-      }
-    });
-
-    child.stderr?.on('data', (chunk: Buffer) => {
-      console.error('[claude stderr]', chunk.toString());
-    });
-
-    child.on('close', (code) => {
-      // flush remaining buffer
-      if (buffer.trim()) {
-        try {
-          const event = JSON.parse(buffer);
-          if (event.type === 'assistant' && event.message?.content) {
-            const text = event.message.content
-              .map((b: { text?: string }) => b.text || '')
-              .join('');
-            if (text) {
-              res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text })}\n\n`);
-            }
-          }
-        } catch {
-          // ignore
-        }
-      }
-      res.write(`data: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-      res.end();
-      if (code !== 0) {
-        reject(new Error(`claude exited with code ${code}`));
-      } else {
-        resolve();
-      }
-    });
-
-    child.on('error', (err) => {
-      res.write(`data: ${JSON.stringify({ type: 'content_block_delta', text: `Error: ${err.message}` })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'message_stop' })}\n\n`);
-      res.end();
-      reject(err);
-    });
-
-    res.on('close', () => {
-      if (!child.killed) child.kill();
-    });
+  return streamCodexTurn({
+    kind: 'research',
+    sessionId,
+    input: prompt,
+    response: res,
   });
 }

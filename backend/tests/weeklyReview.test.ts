@@ -28,6 +28,11 @@ jest.unstable_mockModule('fs', () => ({
   readFileSync: () => '',
   writeFileSync: jest.fn(),
   mkdirSync: jest.fn(),
+  promises: {
+    mkdtemp: jest.fn(),
+    writeFile: jest.fn(),
+    rm: jest.fn(),
+  },
 }));
 
 const { weeklyReviewRouter } = await import('../src/routes/weeklyReview.js');

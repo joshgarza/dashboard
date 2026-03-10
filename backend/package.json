@@ -15,7 +15,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/claude-code": "^2.1.47",
+    "@anthropic-ai/claude-code": "^2.1.71",
+    "@openai/codex-sdk": "^0.113.0",
     "@types/better-sqlite3": "^7.6.13",
     "better-sqlite3": "^12.6.2",
     "cors": "^2.8.6",

@@ -4,6 +4,8 @@ import { config } from '@/config';
 import type { ChatMessage } from './types';
 import { AllTodos } from './AllTodos';
 
+type StreamPhase = 'thinking' | 'working' | 'writing' | null;
+
 interface InterviewChatProps {
   onFinalize: (messages: ChatMessage[]) => void;
   finalizing: boolean;
@@ -13,15 +15,41 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [streamPhase, setStreamPhase] = useState<StreamPhase>(null);
   const [allTodosRefreshKey, setAllTodosRefreshKey] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const hasInitRef = useRef(false);
+  const workingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    return () => {
+      if (workingTimerRef.current !== null) {
+        window.clearTimeout(workingTimerRef.current);
+      }
+    };
+  }, []);
+
+  function clearWorkingTimer() {
+    if (workingTimerRef.current !== null) {
+      window.clearTimeout(workingTimerRef.current);
+      workingTimerRef.current = null;
+    }
+  }
+
+  function beginStreamPhases() {
+    clearWorkingTimer();
+    setStreamPhase('thinking');
+    workingTimerRef.current = window.setTimeout(() => {
+      setStreamPhase((current) => current === 'thinking' ? 'working' : current);
+    }, 1500);
+  }
 
   // Auto-start the conversation
   useEffect(() => {
@@ -35,6 +63,7 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
   async function streamResponse(updatedMessages: ChatMessage[]) {
     setMessages(updatedMessages);
     setStreaming(true);
+    beginStreamPhases();
 
     const assistantMessage: ChatMessage = { role: 'assistant', content: '' };
     setMessages([...updatedMessages, assistantMessage]);
@@ -46,7 +75,7 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
       const res = await fetch(`${config.apiBaseUrl}/api/weekly-review/interview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: updatedMessages }),
+        body: JSON.stringify({ messages: updatedMessages, sessionId }),
         signal: controller.signal,
       });
 
@@ -79,7 +108,11 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
 
           try {
             const parsed = JSON.parse(payload);
-            if (parsed.type === 'content_block_delta' && parsed.text) {
+            if (parsed.type === 'session_id' && typeof parsed.sessionId === 'string') {
+              setSessionId(parsed.sessionId);
+            } else if (parsed.type === 'content_block_delta' && parsed.text) {
+              clearWorkingTimer();
+              setStreamPhase('writing');
               setMessages(prev => {
                 const copy = [...prev];
                 const last = copy[copy.length - 1];
@@ -109,6 +142,8 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
       }
     } finally {
       abortRef.current = null;
+      clearWorkingTimer();
+      setStreamPhase(null);
       setStreaming(false);
     }
   }
@@ -133,11 +168,18 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
   // Count user messages (excluding the auto-init) to decide when to show Finalize
   const userTurns = messages.filter(m => m.role === 'user').length;
   const showFinalize = userTurns >= 3 && !streaming;
+  const visibleMessages = messages.filter((_m, i) => i > 0);
+  const activeAssistantIndex = streaming ? visibleMessages.length - 1 : -1;
+  const streamStatus = streamPhase === 'working'
+    ? 'Working...'
+    : streamPhase === 'writing'
+      ? 'Writing...'
+      : 'Thinking...';
 
   return (
     <div className="flex-1 flex flex-col gap-3 min-h-0">
       <div className="rounded-md border bg-muted/30 overflow-y-auto flex-1 min-h-0 p-3 space-y-2">
-        {messages.filter((_m, i) => i > 0).map((msg, i) => (
+        {visibleMessages.map((msg, i) => (
           <div
             key={i}
             className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
@@ -149,8 +191,14 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
                   : 'bg-muted rounded-lg px-3 py-2 max-w-[80%] text-sm whitespace-pre-wrap'
               }
             >
+              {msg.role === 'assistant' && i === activeAssistantIndex && (
+                <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+                  <span>{streamStatus}</span>
+                </div>
+              )}
               {msg.content}
-              {msg.role === 'assistant' && streaming && i === messages.length - 2 && (
+              {msg.role === 'assistant' && i === activeAssistantIndex && (
                 <span className="inline-block w-1.5 h-4 bg-foreground/70 ml-0.5 animate-pulse" />
               )}
             </div>
@@ -170,7 +218,7 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
           className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none disabled:opacity-50"
         />
         <Button size="sm" onClick={handleSend} disabled={streaming || !input.trim() || finalizing}>
-          {streaming ? 'Sending...' : 'Send'}
+          {streaming ? streamStatus : 'Send'}
         </Button>
       </div>
 

@@ -7,9 +7,7 @@ services:
       - /mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault:/mnt/c/Users/josh/OneDrive/Documents/Obsidian/Obsidian Vault
       - /home/josh/coding/claude/research:/home/josh/coding/claude/research
       - /home/josh/coding/claude/hopper-shared/data:/home/josh/coding/claude/hopper-shared/data
-      - /home/josh/.claude:/home/node/.claude
-    environment:
-      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - /home/josh/.codex:/home/node/.codex
     env_file:
       - ./backend/.env
     restart: unless-stopped
