@@ -198,9 +198,6 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
                 </div>
               )}
               {msg.content}
-              {msg.role === 'assistant' && i === activeAssistantIndex && (
-                <span className="inline-block w-1.5 h-4 bg-foreground/70 ml-0.5 animate-pulse" />
-              )}
             </div>
           </div>
         ))}

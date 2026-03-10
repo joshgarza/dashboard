@@ -1,27 +1,36 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { config } from '@/config';
 import { ContextFilesPopover } from './ContextFilesPopover.tsx';
-import type { ChatMessage, ResearchFileInfo } from './types.ts';
+import { MarkdownMessage } from './MarkdownMessage.tsx';
+import type { ChatMessage, ResearchChatState, ResearchFileInfo } from './types.ts';
 
 type StreamPhase = 'thinking' | 'working' | 'writing' | null;
 
 interface ChatViewProps {
+  chatId: string | null;
   files: ResearchFileInfo[];
+  messages: ChatMessage[];
   selectedFiles: string[];
+  sessionId: string | null;
   onSelectFiles: (files: string[]) => void;
   filesLoading: boolean;
-  onNewChat: () => void;
+  onPersistChat: (chat: ResearchChatState) => string;
+  onUpdateChat: (chatId: string, updates: Partial<ResearchChatState>) => void;
+  onStreamingChange: (streaming: boolean) => void;
 }
 
-export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, onNewChat }: ChatViewProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const stored = localStorage.getItem('research-messages');
-    if (stored) {
-      try { return JSON.parse(stored); } catch { return []; }
-    }
-    return [];
-  });
-  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem('research-session-id'));
+export function ChatView({
+  chatId,
+  files,
+  messages,
+  selectedFiles,
+  sessionId,
+  onSelectFiles,
+  filesLoading,
+  onPersistChat,
+  onUpdateChat,
+  onStreamingChange,
+}: ChatViewProps) {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [streamPhase, setStreamPhase] = useState<StreamPhase>(null);
@@ -30,23 +39,25 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const workingTimerRef = useRef<number | null>(null);
+  const messagesRef = useRef(messages);
+  const sessionIdRef = useRef(sessionId);
+  const selectedFilesRef = useRef(selectedFiles);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    selectedFilesRef.current = selectedFiles;
+  }, [selectedFiles]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
-
-  useEffect(() => {
-    localStorage.setItem('research-messages', JSON.stringify(messages));
-  }, [messages]);
-
-  useEffect(() => {
-    if (sessionId) {
-      localStorage.setItem('research-session-id', sessionId);
-      return;
-    }
-
-    localStorage.removeItem('research-session-id');
-  }, [sessionId]);
 
   const clearWorkingTimer = useCallback(() => {
     if (workingTimerRef.current !== null) {
@@ -69,12 +80,20 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
     };
   }, [clearWorkingTimer]);
 
+  useEffect(() => {
+    setInput('');
+  }, [chatId]);
+
+  useEffect(() => {
+    onStreamingChange(streaming);
+  }, [onStreamingChange, streaming]);
+
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = 'auto';
-    const maxHeight = 6 * 24; // ~6 rows
-    ta.style.height = Math.min(ta.scrollHeight, maxHeight) + 'px';
+    const maxHeight = 6 * 24;
+    ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`;
   }, []);
 
   useEffect(() => {
@@ -86,14 +105,24 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
     if (!trimmed || streaming) return;
 
     const userMessage: ChatMessage = { role: 'user', content: trimmed };
-    const updatedMessages = [...messages, userMessage];
-    setMessages(updatedMessages);
+    const updatedMessages = [...messagesRef.current, userMessage];
+    const currentSelectedFiles = selectedFilesRef.current;
+    const currentSessionId = sessionIdRef.current;
+
+    const persistedChatId = onPersistChat({
+      messages: updatedMessages,
+      sessionId: currentSessionId,
+      selectedFiles: currentSelectedFiles,
+    });
+
+    const assistantMessage: ChatMessage = { role: 'assistant', content: '' };
+    const nextMessages = [...updatedMessages, assistantMessage];
+    messagesRef.current = nextMessages;
+    onUpdateChat(persistedChatId, { messages: nextMessages });
+
     setInput('');
     setStreaming(true);
     beginStreamPhases();
-
-    const assistantMessage: ChatMessage = { role: 'assistant', content: '' };
-    setMessages([...updatedMessages, assistantMessage]);
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -104,20 +133,18 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: trimmed,
-          messages,
-          files: selectedFiles,
-          sessionId,
+          messages: updatedMessages.slice(0, -1),
+          files: currentSelectedFiles,
+          sessionId: currentSessionId,
         }),
         signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
-        setMessages(prev => {
-          const copy = [...prev];
-          copy[copy.length - 1] = { role: 'assistant', content: 'Error: Failed to get response' };
-          return copy;
-        });
-        setStreaming(false);
+        const erroredMessages = [...messagesRef.current];
+        erroredMessages[erroredMessages.length - 1] = { role: 'assistant', content: 'Error: Failed to get response' };
+        messagesRef.current = erroredMessages;
+        onUpdateChat(persistedChatId, { messages: erroredMessages });
         return;
       }
 
@@ -135,41 +162,41 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue;
-          const payload = line.slice(6);
 
+          const payload = line.slice(6);
           if (payload === '[DONE]') continue;
 
           try {
             const parsed = JSON.parse(payload);
             if (parsed.type === 'session_id' && typeof parsed.sessionId === 'string') {
-              setSessionId(parsed.sessionId);
+              sessionIdRef.current = parsed.sessionId;
+              onUpdateChat(persistedChatId, { sessionId: parsed.sessionId });
             } else if (parsed.type === 'content_block_delta' && parsed.text) {
               clearWorkingTimer();
               setStreamPhase('writing');
-              setMessages(prev => {
-                const copy = [...prev];
-                const last = copy[copy.length - 1];
-                copy[copy.length - 1] = { ...last, content: last.content + parsed.text };
-                return copy;
-              });
+              const streamedMessages = [...messagesRef.current];
+              const last = streamedMessages[streamedMessages.length - 1];
+              streamedMessages[streamedMessages.length - 1] = {
+                ...last,
+                content: last.content + parsed.text,
+              };
+              messagesRef.current = streamedMessages;
+              onUpdateChat(persistedChatId, { messages: streamedMessages });
             }
           } catch {
-            // skip malformed lines
+            // Skip malformed lines.
           }
         }
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
-        // user cancelled
-      } else {
-        setMessages(prev => {
-          const copy = [...prev];
-          const last = copy[copy.length - 1];
-          if (last.role === 'assistant' && !last.content) {
-            copy[copy.length - 1] = { role: 'assistant', content: 'Error: Connection failed' };
-          }
-          return copy;
-        });
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        const failedMessages = [...messagesRef.current];
+        const last = failedMessages[failedMessages.length - 1];
+        if (last.role === 'assistant' && !last.content) {
+          failedMessages[failedMessages.length - 1] = { role: 'assistant', content: 'Error: Connection failed' };
+          messagesRef.current = failedMessages;
+          onUpdateChat(persistedChatId, { messages: failedMessages });
+        }
       }
     } finally {
       abortRef.current = null;
@@ -187,11 +214,11 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
   }
 
   function removeFile(key: string) {
-    onSelectFiles(selectedFiles.filter(k => k !== key));
+    onSelectFiles(selectedFiles.filter(selectedKey => selectedKey !== key));
   }
 
   const selectedFileInfos = selectedFiles
-    .map(key => files.find(f => f.key === key))
+    .map(key => files.find(file => file.key === key))
     .filter(Boolean) as ResearchFileInfo[];
   const activeAssistantIndex = streaming ? messages.length - 1 : -1;
   const streamStatus = streamPhase === 'working'
@@ -201,39 +228,39 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
       : 'Thinking...';
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto w-full px-4 py-4">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[52rem] px-4 py-4 sm:px-6 lg:px-8">
           {messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full min-h-[50vh]">
-              <div className="text-center space-y-2">
-                <p className="text-lg text-muted-foreground">What would you like to research?</p>
+            <div className="flex min-h-[50vh] items-center justify-center">
+              <div className="space-y-2 text-center">
+                <p className="text-lg text-muted-foreground">Start a new research chat</p>
                 <p className="text-sm text-muted-foreground/60">
-                  Attach context files for grounded answers
+                  Ask a question, attach context files, or revisit a saved conversation from the sidebar.
                 </p>
               </div>
             </div>
           ) : (
             <div className="space-y-4 py-4">
-              {messages.map((msg, i) => (
-                <div key={i} className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+              {messages.map((message, index) => (
+                <div key={index} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
                   <div
                     className={
-                      msg.role === 'user'
-                        ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-2.5 max-w-[85%] text-sm'
-                        : 'text-foreground max-w-[85%] text-sm whitespace-pre-wrap'
+                      message.role === 'user'
+                        ? 'max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground'
+                        : 'max-w-[85%] text-foreground'
                     }
                   >
-                    {msg.role === 'assistant' && i === activeAssistantIndex && (
+                    {message.role === 'assistant' && index === activeAssistantIndex && (
                       <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground">
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
                         <span>{streamStatus}</span>
                       </div>
                     )}
-                    {msg.content}
-                    {msg.role === 'assistant' && i === activeAssistantIndex && (
-                      <span className="inline-block w-1.5 h-4 bg-foreground/70 ml-0.5 animate-pulse" />
+                    {message.role === 'assistant' ? (
+                      <MarkdownMessage content={message.content} />
+                    ) : (
+                      <div className="whitespace-pre-wrap">{message.content}</div>
                     )}
                   </div>
                 </div>
@@ -244,21 +271,20 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
         </div>
       </div>
 
-      {/* Input area */}
       <div className="bg-background pb-[env(safe-area-inset-bottom)]">
-        <div className="max-w-3xl mx-auto w-full px-3 sm:px-6 pt-2 pb-4">
+        <div className="mx-auto w-full max-w-[52rem] px-4 pt-2 pb-4 sm:px-6 lg:px-8">
           {selectedFileInfos.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mb-2 px-1">
-              {selectedFileInfos.map(f => (
+            <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+              {selectedFileInfos.map(file => (
                 <span
-                  key={f.key}
+                  key={file.key}
                   className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground"
                 >
-                  {f.topic}
+                  {file.topic}
                   <button
                     type="button"
-                    onClick={() => removeFile(f.key)}
-                    className="hover:text-foreground ml-0.5"
+                    onClick={() => removeFile(file.key)}
+                    className="ml-0.5 hover:text-foreground"
                   >
                     &times;
                   </button>
@@ -266,7 +292,8 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
               ))}
             </div>
           )}
-          <div className="rounded-2xl border border-input bg-muted/30 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 ring-offset-background">
+
+          <div className="rounded-2xl border border-input bg-muted/30 ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
             <textarea
               ref={textareaRef}
               value={input}
@@ -275,9 +302,10 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
               placeholder="Ask about your research..."
               disabled={streaming}
               rows={1}
-              className="w-full bg-transparent px-4 pt-3 pb-1 text-base sm:text-sm resize-none focus:outline-none disabled:opacity-50 overflow-y-auto placeholder:text-muted-foreground"
+              className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 text-base placeholder:text-muted-foreground focus:outline-none disabled:opacity-50 sm:text-sm"
               style={{ maxHeight: '144px' }}
             />
+
             <div className="flex items-center justify-between px-2 pb-2">
               <ContextFilesPopover
                 files={files}
@@ -285,39 +313,16 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
                 onSelectFiles={onSelectFiles}
                 filesLoading={filesLoading}
               />
-              <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => { clearWorkingTimer(); setMessages([]); setSessionId(null); setStreamPhase(null); onNewChat(); }}
-                disabled={streaming}
-                aria-label="New chat"
-                title="New chat"
-                className="h-8 w-8 shrink-0 rounded-lg text-muted-foreground flex items-center justify-center disabled:opacity-30 hover:bg-muted transition-colors"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M12 20h9" />
-                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                </svg>
-              </button>
+
               <button
                 type="button"
                 onClick={handleSend}
                 disabled={streaming || !input.trim()}
                 aria-label={streaming ? streamStatus : 'Send message'}
-                className="h-8 w-8 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-30 hover:bg-primary/90 transition-colors"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-30"
               >
                 {streaming ? (
-                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
@@ -338,7 +343,6 @@ export function ChatView({ files, selectedFiles, onSelectFiles, filesLoading, on
                   </svg>
                 )}
               </button>
-              </div>
             </div>
           </div>
         </div>

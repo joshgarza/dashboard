@@ -48,7 +48,7 @@ export function ContextFilesPopover({
         variant="ghost"
         size="sm"
         onClick={() => setOpen(o => !o)}
-        className="h-8 w-8 p-0"
+        className="h-8 w-8 cursor-pointer rounded-lg p-0 transition-colors hover:bg-muted"
         disabled={filesLoading}
       >
         <svg

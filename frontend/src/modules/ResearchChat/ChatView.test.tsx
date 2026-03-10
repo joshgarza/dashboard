@@ -1,5 +1,7 @@
 import { jest } from '@jest/globals';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import type { ResearchChatState } from './types.ts';
 
 jest.unstable_mockModule('@/config', () => ({
   config: {
@@ -9,6 +11,10 @@ jest.unstable_mockModule('@/config', () => ({
 
 jest.unstable_mockModule('./ContextFilesPopover.tsx', () => ({
   ContextFilesPopover: () => <div data-testid="context-files-popover" />,
+}));
+
+jest.unstable_mockModule('./MarkdownMessage.tsx', () => ({
+  MarkdownMessage: ({ content }: { content: string }) => <div data-testid="markdown-message">{content}</div>,
 }));
 
 const { ChatView } = await import('./ChatView.tsx');
@@ -76,15 +82,36 @@ describe('ChatView', () => {
       } as Response)
     ) as typeof fetch;
 
-    render(
-      <ChatView
-        files={[]}
-        selectedFiles={[]}
-        onSelectFiles={() => {}}
-        filesLoading={false}
-        onNewChat={() => {}}
-      />
-    );
+    function ChatViewHarness() {
+      const [activeChatId, setActiveChatId] = useState<string | null>(null);
+      const [chatState, setChatState] = useState<ResearchChatState>({
+        messages: [],
+        sessionId: null,
+        selectedFiles: [],
+      });
+
+      return (
+        <ChatView
+          chatId={activeChatId}
+          files={[]}
+          messages={chatState.messages}
+          selectedFiles={chatState.selectedFiles}
+          sessionId={chatState.sessionId}
+          onSelectFiles={(files) => setChatState(prev => ({ ...prev, selectedFiles: files }))}
+          filesLoading={false}
+          onPersistChat={(chat) => {
+            const nextChatId = activeChatId ?? 'chat-1';
+            setActiveChatId(nextChatId);
+            setChatState(chat);
+            return nextChatId;
+          }}
+          onUpdateChat={(_chatId, updates) => setChatState(prev => ({ ...prev, ...updates }))}
+          onStreamingChange={() => {}}
+        />
+      );
+    }
+
+    render(<ChatViewHarness />);
 
     fireEvent.change(screen.getByPlaceholderText('Ask about your research...'), {
       target: { value: 'Explain edge caching' },

@@ -56,9 +56,9 @@ function App() {
 
   return (
     <ThemeProvider>
-      <div className="min-h-screen bg-background flex flex-col">
-        <header className="border-b">
-          <div className="container mx-auto px-4 py-3 flex items-center justify-between">
+      <div className="h-screen overflow-hidden bg-background flex flex-col">
+        <header className="sticky top-0 z-30 shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex w-full items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
             <nav className="flex items-center gap-4">
               <Link
                 to="/"
@@ -82,25 +82,31 @@ function App() {
             <ThemeToggle />
           </div>
         </header>
-        <main className="container mx-auto flex-1 flex flex-col">
+        <main className="w-full flex-1 min-h-0 overflow-hidden flex flex-col">
           <Routes>
             <Route path="/" element={
-              <ErrorBoundary>
-                <Dashboard modules={modules} />
-              </ErrorBoundary>
+              <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto">
+                <div className="mx-auto w-full max-w-[1600px]">
+                  <ErrorBoundary>
+                    <Dashboard modules={modules} />
+                  </ErrorBoundary>
+                </div>
+              </div>
             } />
             <Route path="/research" element={
-              <div className="flex-1 flex flex-col">
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <ErrorBoundary>
                   <ResearchChat />
                 </ErrorBoundary>
               </div>
             } />
             <Route path="/weekly-review" element={
-              <div className="px-4 py-4 flex-1 flex flex-col">
-                <ErrorBoundary>
-                  <WeeklyReview />
-                </ErrorBoundary>
+              <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto">
+                <div className="flex min-h-full flex-col px-4 py-4 sm:px-6 lg:px-8">
+                  <ErrorBoundary>
+                    <WeeklyReview />
+                  </ErrorBoundary>
+                </div>
               </div>
             } />
           </Routes>

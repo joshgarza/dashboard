@@ -3,6 +3,19 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ResearchChatState {
+  messages: ChatMessage[];
+  sessionId: string | null;
+  selectedFiles: string[];
+}
+
+export interface ResearchChatThread extends ResearchChatState {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ResearchFileInfo {
   key: string;
   filename: string;
