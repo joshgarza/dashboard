@@ -1,17 +1,19 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { config } from '@/config';
 import type { ChatMessage } from './types';
 import { AllTodos } from './AllTodos';
 
 type StreamPhase = 'thinking' | 'working' | 'writing' | null;
+const REVIEW_START_MESSAGE = "Let's do my weekly review.";
 
 interface InterviewChatProps {
-  onFinalize: (messages: ChatMessage[]) => void;
+  onFinalize: (messages: ChatMessage[]) => void | Promise<void>;
   finalizing: boolean;
+  onStreamingChange?: (streaming: boolean) => void;
 }
 
-export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
+export function InterviewChat({ onFinalize, finalizing, onStreamingChange }: InterviewChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -20,8 +22,8 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const hasInitRef = useRef(false);
   const workingTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -35,6 +37,22 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    onStreamingChange?.(streaming);
+  }, [onStreamingChange, streaming]);
+
+  const resizeTextarea = useCallback(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const maxHeight = 6 * 24;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeTextarea();
+  }, [input, resizeTextarea]);
 
   function clearWorkingTimer() {
     if (workingTimerRef.current !== null) {
@@ -50,15 +68,6 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
       setStreamPhase((current) => current === 'thinking' ? 'working' : current);
     }, 1500);
   }
-
-  // Auto-start the conversation
-  useEffect(() => {
-    if (hasInitRef.current) return;
-    hasInitRef.current = true;
-
-    const initMessage: ChatMessage = { role: 'user', content: "Let's do my weekly review." };
-    streamResponse([initMessage]);
-  }, []);
 
   async function streamResponse(updatedMessages: ChatMessage[]) {
     setMessages(updatedMessages);
@@ -158,6 +167,15 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
     await streamResponse(updatedMessages);
   }
 
+  async function handleStartReview() {
+    if (streaming || finalizing || messages.length > 0) {
+      return;
+    }
+
+    const kickoffMessage: ChatMessage = { role: 'user', content: REVIEW_START_MESSAGE };
+    await streamResponse([kickoffMessage]);
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -165,10 +183,11 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
     }
   }
 
-  // Count user messages (excluding the auto-init) to decide when to show Finalize
-  const userTurns = messages.filter(m => m.role === 'user').length;
+  const visibleMessages = messages.filter((message, index) => {
+    return !(index === 0 && message.role === 'user' && message.content === REVIEW_START_MESSAGE);
+  });
+  const userTurns = visibleMessages.filter((message) => message.role === 'user').length;
   const showFinalize = userTurns >= 3 && !streaming;
-  const visibleMessages = messages.filter((_m, i) => i > 0);
   const activeAssistantIndex = streaming ? visibleMessages.length - 1 : -1;
   const streamStatus = streamPhase === 'working'
     ? 'Working...'
@@ -177,55 +196,120 @@ export function InterviewChat({ onFinalize, finalizing }: InterviewChatProps) {
       : 'Thinking...';
 
   return (
-    <div className="flex-1 flex flex-col gap-3 min-h-0">
-      <div className="rounded-md border bg-muted/30 overflow-y-auto flex-1 min-h-0 p-3 space-y-2">
-        {visibleMessages.map((msg, i) => (
-          <div
-            key={i}
-            className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
-          >
-            <div
-              className={
-                msg.role === 'user'
-                  ? 'bg-primary text-primary-foreground rounded-lg px-3 py-2 max-w-[80%] text-sm'
-                  : 'bg-muted rounded-lg px-3 py-2 max-w-[80%] text-sm whitespace-pre-wrap'
-              }
-            >
-              {msg.role === 'assistant' && i === activeAssistantIndex && (
-                <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground">
-                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
-                  <span>{streamStatus}</span>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[52rem] px-4 py-4 sm:px-6 lg:px-8">
+          {visibleMessages.length === 0 ? (
+            <div className="flex min-h-[50vh] items-center justify-center">
+              <div className="space-y-4 text-center">
+                <div className="space-y-2">
+                  <p className="text-lg text-muted-foreground">Start a new weekly review</p>
+                  <p className="text-sm text-muted-foreground/60">
+                    Kick off the planning interview, type your own opening message, or reopen a saved review from the sidebar.
+                  </p>
                 </div>
+                <div className="flex justify-center">
+                  <Button onClick={() => void handleStartReview()} disabled={streaming || finalizing}>
+                    Start review
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4 py-4">
+              {visibleMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
+                >
+                  <div
+                    className={
+                      msg.role === 'user'
+                        ? 'max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground'
+                        : 'max-w-[85%] text-foreground'
+                    }
+                  >
+                    {msg.role === 'assistant' && i === activeAssistantIndex && (
+                      <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium tracking-[0.08em] text-muted-foreground">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+                        <span>{streamStatus}</span>
+                      </div>
+                    )}
+                    {msg.role === 'assistant' ? (
+                      <div className="whitespace-pre-wrap text-sm leading-7 text-foreground">{msg.content}</div>
+                    ) : (
+                      <div className="whitespace-pre-wrap">{msg.content}</div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-background pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto w-full max-w-[52rem] px-4 pt-2 pb-4 sm:px-6 lg:px-8">
+          <div className="rounded-2xl border border-input bg-muted/30 ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Reply to the planning assistant..."
+              disabled={streaming || finalizing}
+              rows={1}
+              className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 text-base placeholder:text-muted-foreground focus:outline-none disabled:opacity-50 sm:text-sm"
+              style={{ maxHeight: '144px' }}
+            />
+
+            <div className="flex items-center justify-between gap-2 px-2 pb-2">
+              {showFinalize ? (
+                <Button variant="ghost" size="sm" onClick={() => onFinalize(messages)} disabled={finalizing}>
+                  {finalizing ? 'Generating Plan...' : 'Finalize Plan'}
+                </Button>
+              ) : (
+                <div className="h-8" />
               )}
-              {msg.content}
+
+              <button
+                type="button"
+                onClick={() => void handleSend()}
+                disabled={streaming || finalizing || !input.trim()}
+                aria-label={streaming ? streamStatus : 'Send message'}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-30"
+              >
+                {streaming ? (
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14" />
+                    <path d="m12 5 7 7-7 7" />
+                  </svg>
+                )}
+              </button>
             </div>
           </div>
-        ))}
-        <div ref={messagesEndRef} />
+
+          <div className="pt-3">
+            <AllTodos refreshKey={allTodosRefreshKey} />
+          </div>
+        </div>
       </div>
-
-      <div className="flex gap-2">
-        <textarea
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Reply to the planning assistant..."
-          disabled={streaming || finalizing}
-          rows={1}
-          className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 resize-none disabled:opacity-50"
-        />
-        <Button size="sm" onClick={handleSend} disabled={streaming || !input.trim() || finalizing}>
-          {streaming ? streamStatus : 'Send'}
-        </Button>
-      </div>
-
-      {showFinalize && (
-        <Button onClick={() => onFinalize(messages)} disabled={finalizing}>
-          {finalizing ? 'Generating Plan...' : 'Finalize Plan'}
-        </Button>
-      )}
-
-      <AllTodos refreshKey={allTodosRefreshKey} />
     </div>
   );
 }

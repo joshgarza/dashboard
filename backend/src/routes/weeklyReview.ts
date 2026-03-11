@@ -6,6 +6,8 @@ import {
   getTodayDateString,
   getPlanForDate,
   getWeeklyGoalsForDate,
+  listSavedReviews,
+  getSavedReview,
   toggleTask,
   streamInterview,
   generatePlan,
@@ -84,6 +86,35 @@ router.post('/weekly-review/day/:date/:index/toggle', async (req: Request, res: 
   }
 });
 
+router.get('/weekly-review/reviews', async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const reviews = listSavedReviews();
+    res.json({ success: true, data: reviews });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/weekly-review/reviews/:id', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const reviewId = parseInt(req.params.id as string, 10);
+    if (isNaN(reviewId)) {
+      res.status(400).json({ success: false, error: 'Invalid review id' });
+      return;
+    }
+
+    const review = getSavedReview(reviewId);
+    if (!review) {
+      res.status(404).json({ success: false, error: 'Review not found' });
+      return;
+    }
+
+    res.json({ success: true, data: review });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post('/weekly-review/interview', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { messages, sessionId } = req.body;
@@ -113,7 +144,7 @@ router.post('/weekly-review/finalize', async (req: Request, res: Response, next:
     const plan = await generatePlan(messages);
     res.json({ success: true, data: plan });
     // Fire-and-forget: update learning profile in background
-    updateProfileAfterReview(messages, plan);
+    updateProfileAfterReview(messages, plan.plan);
   } catch (err) {
     next(err);
   }

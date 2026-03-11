@@ -19,6 +19,30 @@ export interface WeeklyPlan {
   dropped: string[];
 }
 
+export interface WeeklyReviewCompletionSummary {
+  completedCount: number;
+  assignedCount: number;
+}
+
+export interface WeeklyReviewSummary {
+  id: number;
+  week: string;
+  interviewedAt: string;
+  weeklyGoals: string[];
+  dayCount: number;
+  taskCount: number;
+  completionSummary: WeeklyReviewCompletionSummary | null;
+}
+
+export interface WeeklyReviewRecord extends WeeklyReviewSummary {
+  plan: WeeklyPlan;
+}
+
+export interface FinalizedWeeklyReview {
+  reviewId: number;
+  plan: WeeklyPlan;
+}
+
 export interface LearningProfile {
   energy_patterns: {
     notes: string;

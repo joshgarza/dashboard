@@ -3,8 +3,13 @@ import type { WeeklyPlan } from './types';
 
 interface PlanPreviewProps {
   plan: WeeklyPlan;
-  onAccept: () => void;
-  onBack: () => void;
+  title?: string;
+  subtitle?: string;
+  notice?: string;
+  primaryActionLabel?: string;
+  onPrimaryAction?: () => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 }
 
 function formatDate(dateStr: string): string {
@@ -12,11 +17,33 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-export function PlanPreview({ plan, onAccept, onBack }: PlanPreviewProps) {
+export function PlanPreview({
+  plan,
+  title,
+  subtitle,
+  notice,
+  primaryActionLabel,
+  onPrimaryAction,
+  secondaryActionLabel,
+  onSecondaryAction,
+}: PlanPreviewProps) {
   const sortedDays = Object.entries(plan.days).sort(([a], [b]) => a.localeCompare(b));
 
   return (
-    <div className="flex-1 flex flex-col gap-4 overflow-y-auto">
+    <div className="flex flex-col gap-4 pb-8">
+      {(title || subtitle) && (
+        <div className="space-y-1">
+          {title && <h2 className="text-xl font-semibold text-foreground">{title}</h2>}
+          {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
+        </div>
+      )}
+
+      {notice && (
+        <div className="rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-foreground">
+          {notice}
+        </div>
+      )}
+
       {plan.weeklyGoals.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold mb-1">Weekly Goals</h3>
@@ -74,10 +101,18 @@ export function PlanPreview({ plan, onAccept, onBack }: PlanPreviewProps) {
         </div>
       )}
 
-      <div className="flex gap-2 pt-2">
-        <Button onClick={onAccept}>Accept Plan</Button>
-        <Button variant="outline" onClick={onBack}>Back to Chat</Button>
-      </div>
+      {(onPrimaryAction || onSecondaryAction) && (
+        <div className="flex gap-2 pt-2">
+          {onPrimaryAction && (
+            <Button onClick={onPrimaryAction}>{primaryActionLabel ?? 'Continue'}</Button>
+          )}
+          {onSecondaryAction && (
+            <Button variant="outline" onClick={onSecondaryAction}>
+              {secondaryActionLabel ?? 'Back'}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

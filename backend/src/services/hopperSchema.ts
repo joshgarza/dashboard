@@ -44,9 +44,20 @@ export function initWeeklyReviewSchema(): void {
       source TEXT NOT NULL DEFAULT 'manual'
     );
 
+    CREATE TABLE IF NOT EXISTS svc_weekly_review_review_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      week TEXT NOT NULL,
+      interviewed_at TEXT NOT NULL,
+      plan_json TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_plan ON svc_weekly_review_tasks(plan_id);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_date ON svc_weekly_review_tasks(scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_deferred_plan ON svc_weekly_review_deferred(plan_id);
+    CREATE INDEX IF NOT EXISTS idx_svc_wr_snapshots_interviewed_at
+      ON svc_weekly_review_review_snapshots(interviewed_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_svc_wr_snapshots_week
+      ON svc_weekly_review_review_snapshots(week);
     CREATE INDEX IF NOT EXISTS idx_svc_dc_thought ON svc_dashboard_completions(thought_id);
   `);
 }

@@ -101,12 +101,10 @@ function App() {
               </div>
             } />
             <Route path="/weekly-review" element={
-              <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto">
-                <div className="flex min-h-full flex-col px-4 py-4 sm:px-6 lg:px-8">
-                  <ErrorBoundary>
-                    <WeeklyReview />
-                  </ErrorBoundary>
-                </div>
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <ErrorBoundary>
+                  <WeeklyReview />
+                </ErrorBoundary>
               </div>
             } />
           </Routes>

@@ -65,6 +65,17 @@ function getTestWeekString(): string {
   return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
 }
 
+function getTestPreviousWeekString(): string {
+  const d = getTestNowInPT();
+  d.setDate(d.getDate() - 7);
+  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil((((utc.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
+
 function getTestTodayString(): string {
   const d = getTestNowInPT();
   const year = d.getFullYear();
@@ -86,8 +97,40 @@ function insertTask(planId: number, date: string, text: string, order: number, c
   ).run(planId, date, focus, text, order, completed ? 1 : 0);
 }
 
+function insertReviewSnapshot({
+  week,
+  interviewedAt,
+  weeklyGoals = ['Goal A'],
+  days = {},
+  unscheduled = [],
+  dropped = [],
+}: {
+  week: string;
+  interviewedAt: string;
+  weeklyGoals?: string[];
+  days?: Record<string, { focus: string; tasks: Array<{ text: string; thought_id: number | null; completed: boolean }> }>;
+  unscheduled?: string[];
+  dropped?: string[];
+}): number {
+  const plan = {
+    week,
+    interviewedAt,
+    weeklyGoals,
+    days,
+    unscheduled,
+    dropped,
+  };
+
+  const result = db.prepare(
+    'INSERT INTO svc_weekly_review_review_snapshots (week, interviewed_at, plan_json) VALUES (?, ?, ?)'
+  ).run(week, interviewedAt, JSON.stringify(plan));
+
+  return Number(result.lastInsertRowid);
+}
+
 describe('Weekly Review API', () => {
   beforeEach(() => {
+    db.exec('DELETE FROM svc_weekly_review_review_snapshots');
     db.exec('DELETE FROM svc_weekly_review_deferred');
     db.exec('DELETE FROM svc_weekly_review_tasks');
     db.exec('DELETE FROM svc_weekly_review_plans');
@@ -185,6 +228,127 @@ describe('Weekly Review API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
+    });
+  });
+
+  describe('GET /api/weekly-review/reviews', () => {
+    it('returns all saved reviews in reverse chronological order, including multiple in the same week', async () => {
+      const week = getTestWeekString();
+      const olderId = insertReviewSnapshot({
+        week,
+        interviewedAt: '2026-03-09T08:00:00.000Z',
+        weeklyGoals: ['Older review'],
+        days: {
+          '2026-03-09': {
+            focus: 'Focus older',
+            tasks: [{ text: 'Older task', thought_id: null, completed: false }],
+          },
+        },
+      });
+      const newerId = insertReviewSnapshot({
+        week,
+        interviewedAt: '2026-03-10T12:30:00.000Z',
+        weeklyGoals: ['Latest review'],
+        days: {
+          '2026-03-10': {
+            focus: 'Focus newer',
+            tasks: [
+              { text: 'Newer task 1', thought_id: null, completed: false },
+              { text: 'Newer task 2', thought_id: null, completed: false },
+            ],
+          },
+        },
+      });
+
+      const response = await request(app).get('/api/weekly-review/reviews');
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual([
+        expect.objectContaining({
+          id: newerId,
+          week,
+          interviewedAt: '2026-03-10T12:30:00.000Z',
+          weeklyGoals: ['Latest review'],
+          dayCount: 1,
+          taskCount: 2,
+          completionSummary: null,
+        }),
+        expect.objectContaining({
+          id: olderId,
+          week,
+          interviewedAt: '2026-03-09T08:00:00.000Z',
+          weeklyGoals: ['Older review'],
+          dayCount: 1,
+          taskCount: 1,
+          completionSummary: null,
+        }),
+      ]);
+    });
+
+    it('includes completion summary for past weeks', async () => {
+      const pastWeek = getTestPreviousWeekString();
+      const plan = insertPlan(pastWeek, ['Past goal']);
+      insertTask(plan.id, '2026-03-03', 'Completed task', 0, true, 'Past focus');
+      insertTask(plan.id, '2026-03-04', 'Missed task', 1, false, 'Past focus');
+
+      const reviewId = insertReviewSnapshot({
+        week: pastWeek,
+        interviewedAt: '2026-03-04T18:00:00.000Z',
+        weeklyGoals: ['Past goal'],
+        days: {
+          '2026-03-03': {
+            focus: 'Past focus',
+            tasks: [
+              { text: 'Completed task', thought_id: null, completed: false },
+              { text: 'Missed task', thought_id: null, completed: false },
+            ],
+          },
+        },
+      });
+
+      const response = await request(app).get('/api/weekly-review/reviews');
+
+      expect(response.status).toBe(200);
+      expect(response.body.data).toContainEqual(expect.objectContaining({
+        id: reviewId,
+        completionSummary: {
+          completedCount: 1,
+          assignedCount: 2,
+        },
+      }));
+    });
+  });
+
+  describe('GET /api/weekly-review/reviews/:id', () => {
+    it('returns the selected saved review', async () => {
+      const reviewId = insertReviewSnapshot({
+        week: '2026-W11',
+        interviewedAt: '2026-03-10T12:30:00.000Z',
+        weeklyGoals: ['Ship weekly review UI'],
+        days: {
+          '2026-03-10': {
+            focus: 'Frontend',
+            tasks: [{ text: 'Implement sidebar', thought_id: 42, completed: false }],
+          },
+        },
+        unscheduled: ['Polish animations'],
+      });
+
+      const response = await request(app).get(`/api/weekly-review/reviews/${reviewId}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data).toEqual(expect.objectContaining({
+        id: reviewId,
+        week: '2026-W11',
+        weeklyGoals: ['Ship weekly review UI'],
+        taskCount: 1,
+        completionSummary: null,
+        plan: expect.objectContaining({
+          unscheduled: ['Polish animations'],
+        }),
+      }));
     });
   });
 

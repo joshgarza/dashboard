@@ -7,7 +7,11 @@ import { completeTodo } from './todoService.js';
 import { runCodexStructuredTask, runCodexTextTask, streamCodexTurn } from './codexProvider.js';
 import { sessionManager } from './sessionManager.js';
 import type {
+  FinalizedWeeklyReview,
   WeeklyPlan,
+  WeeklyReviewCompletionSummary,
+  WeeklyReviewRecord,
+  WeeklyReviewSummary,
   DailyPlan,
   DailyTask,
   ChatMessage,
@@ -101,14 +105,100 @@ interface DeferredRow {
   status: string;
 }
 
-function loadPlanFromDb(week: string): WeeklyPlan | null {
+interface ReviewSnapshotRow {
+  id: number;
+  week: string;
+  interviewed_at: string;
+  plan_json: string;
+}
+
+function parseWeeklyPlan(rawPlan: string): WeeklyPlan {
+  return JSON.parse(rawPlan) as WeeklyPlan;
+}
+
+function countPlanTasks(plan: WeeklyPlan): number {
+  return Object.values(plan.days).reduce((count, day) => count + day.tasks.length, 0);
+}
+
+function flattenPlanTasks(plan: WeeklyPlan): DailyTask[] {
+  return Object.values(plan.days).flatMap((day) => day.tasks);
+}
+
+function decrementCount(map: Map<string, number>, key: string): boolean {
+  const count = map.get(key) ?? 0;
+  if (count <= 0) {
+    return false;
+  }
+
+  if (count === 1) {
+    map.delete(key);
+  } else {
+    map.set(key, count - 1);
+  }
+
+  return true;
+}
+
+function buildCompletionSummary(plan: WeeklyPlan): WeeklyReviewCompletionSummary | null {
+  if (plan.week.localeCompare(getCurrentWeekString()) >= 0) {
+    return null;
+  }
+
+  const activePlan = loadPlanFromDb(plan.week);
+  if (!activePlan) {
+    return null;
+  }
+
+  const completedByThoughtId = new Map<string, number>();
+  const completedByText = new Map<string, number>();
+
+  for (const task of flattenPlanTasks(activePlan)) {
+    if (!task.completed) {
+      continue;
+    }
+
+    if (task.thought_id != null) {
+      const thoughtKey = String(task.thought_id);
+      completedByThoughtId.set(thoughtKey, (completedByThoughtId.get(thoughtKey) ?? 0) + 1);
+    }
+
+    completedByText.set(task.text, (completedByText.get(task.text) ?? 0) + 1);
+  }
+
+  let completedCount = 0;
+  const assignedCount = countPlanTasks(plan);
+
+  for (const task of flattenPlanTasks(plan)) {
+    if (task.thought_id != null && decrementCount(completedByThoughtId, String(task.thought_id))) {
+      completedCount += 1;
+      continue;
+    }
+
+    if (decrementCount(completedByText, task.text)) {
+      completedCount += 1;
+    }
+  }
+
+  return {
+    completedCount,
+    assignedCount,
+  };
+}
+
+function buildReviewSummary(row: ReviewSnapshotRow, plan: WeeklyPlan): WeeklyReviewSummary {
+  return {
+    id: row.id,
+    week: row.week,
+    interviewedAt: row.interviewed_at,
+    weeklyGoals: plan.weeklyGoals,
+    dayCount: Object.keys(plan.days).length,
+    taskCount: countPlanTasks(plan),
+    completionSummary: buildCompletionSummary(plan),
+  };
+}
+
+function loadPlanFromRow(planRow: PlanRow): WeeklyPlan | null {
   const db = getHopperDb();
-
-  const planRow = db
-    .prepare('SELECT * FROM svc_weekly_review_plans WHERE week = ?')
-    .get(week) as PlanRow | undefined;
-
-  if (!planRow) return null;
 
   const taskRows = db
     .prepare('SELECT * FROM svc_weekly_review_tasks WHERE plan_id = ? ORDER BY scheduled_date, sort_order')
@@ -118,7 +208,6 @@ function loadPlanFromDb(week: string): WeeklyPlan | null {
     .prepare('SELECT * FROM svc_weekly_review_deferred WHERE plan_id = ?')
     .all(planRow.id) as DeferredRow[];
 
-  // Group tasks by date
   const days: Record<string, DailyPlan> = {};
   for (const row of taskRows) {
     if (!days[row.scheduled_date]) {
@@ -137,10 +226,67 @@ function loadPlanFromDb(week: string): WeeklyPlan | null {
     interviewedAt: planRow.interviewed_at,
     weeklyGoals: JSON.parse(planRow.weekly_goals),
     days,
-    unscheduled: deferredRows.filter(r => r.status === 'unscheduled').map(r => r.task_text),
-    dropped: deferredRows.filter(r => r.status === 'dropped').map(r => r.task_text),
+    unscheduled: deferredRows.filter((row) => row.status === 'unscheduled').map((row) => row.task_text),
+    dropped: deferredRows.filter((row) => row.status === 'dropped').map((row) => row.task_text),
   };
 }
+
+function loadActivePlanRow(week: string): PlanRow | null {
+  const db = getHopperDb();
+
+  const planRow = db
+    .prepare('SELECT * FROM svc_weekly_review_plans WHERE week = ?')
+    .get(week) as PlanRow | undefined;
+
+  return planRow ?? null;
+}
+
+function loadPlanFromDb(week: string): WeeklyPlan | null {
+  const planRow = loadActivePlanRow(week);
+  if (!planRow) {
+    return null;
+  }
+  return loadPlanFromRow(planRow);
+}
+
+function saveReviewSnapshot(plan: WeeklyPlan): number {
+  const db = getHopperDb();
+  const result = db.prepare(`
+    INSERT INTO svc_weekly_review_review_snapshots (week, interviewed_at, plan_json)
+    VALUES (?, ?, ?)
+  `).run(plan.week, plan.interviewedAt, JSON.stringify(plan));
+
+  return Number(result.lastInsertRowid);
+}
+
+function backfillReviewSnapshots(): void {
+  const db = getHopperDb();
+  const planRows = db
+    .prepare('SELECT * FROM svc_weekly_review_plans ORDER BY interviewed_at DESC, id DESC')
+    .all() as PlanRow[];
+
+  for (const planRow of planRows) {
+    const existing = db
+      .prepare(`
+        SELECT 1
+        FROM svc_weekly_review_review_snapshots
+        WHERE week = ? AND interviewed_at = ?
+        LIMIT 1
+      `)
+      .get(planRow.week, planRow.interviewed_at);
+
+    if (existing) {
+      continue;
+    }
+
+    const plan = loadPlanFromRow(planRow);
+    if (plan) {
+      saveReviewSnapshot(plan);
+    }
+  }
+}
+
+backfillReviewSnapshots();
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -213,6 +359,39 @@ export function toggleTask(dateStr: string, taskIndex: number): DailyTask {
     thought_id: task.thought_id,
     text: task.task_text,
     completed: newCompleted === 1,
+  };
+}
+
+export function listSavedReviews(): WeeklyReviewSummary[] {
+  const db = getHopperDb();
+  const rows = db
+    .prepare(`
+      SELECT *
+      FROM svc_weekly_review_review_snapshots
+      ORDER BY interviewed_at DESC, id DESC
+    `)
+    .all() as ReviewSnapshotRow[];
+
+  return rows.map((row) => {
+    const plan = parseWeeklyPlan(row.plan_json);
+    return buildReviewSummary(row, plan);
+  });
+}
+
+export function getSavedReview(reviewId: number): WeeklyReviewRecord | null {
+  const db = getHopperDb();
+  const row = db
+    .prepare('SELECT * FROM svc_weekly_review_review_snapshots WHERE id = ?')
+    .get(reviewId) as ReviewSnapshotRow | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  const plan = parseWeeklyPlan(row.plan_json);
+  return {
+    ...buildReviewSummary(row, plan),
+    plan,
   };
 }
 
@@ -617,7 +796,7 @@ const WEEKLY_PLAN_OUTPUT_SCHEMA = {
 
 export function generatePlan(
   messages: ChatMessage[],
-): Promise<WeeklyPlan> {
+): Promise<FinalizedWeeklyReview> {
   return (async () => {
     const context = getWeeklyContext();
     const week = getCurrentWeekString();
@@ -651,6 +830,11 @@ Generate the JSON plan now:`;
     };
 
     savePlan(plan);
-    return plan;
+    const reviewId = saveReviewSnapshot(plan);
+
+    return {
+      reviewId,
+      plan,
+    };
   })();
 }

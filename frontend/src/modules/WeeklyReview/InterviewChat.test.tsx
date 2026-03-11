@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 jest.unstable_mockModule('@/config', () => ({
   config: {
@@ -65,7 +65,7 @@ describe('InterviewChat', () => {
     jest.useRealTimers();
   });
 
-  it('shows thinking, working, and writing phases for the in-progress assistant response', async () => {
+  it('waits for an explicit start before showing streaming phases', async () => {
     const stream = createControlledStream();
 
     globalThis.fetch = jest.fn(() =>
@@ -76,6 +76,11 @@ describe('InterviewChat', () => {
     ) as typeof fetch;
 
     render(<InterviewChat onFinalize={() => {}} finalizing={false} />);
+
+    expect(screen.getByRole('button', { name: 'Start review' })).toBeInTheDocument();
+    expect(screen.queryByText('Thinking...')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start review' }));
 
     await waitFor(() => {
       expect(screen.getAllByText('Thinking...').length).toBeGreaterThan(0);

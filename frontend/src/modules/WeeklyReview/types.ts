@@ -4,8 +4,9 @@ export interface ChatMessage {
 }
 
 export interface DailyTask {
+  id?: number;
+  thought_id?: number | null;
   text: string;
-  source: string;
   completed: boolean;
 }
 
@@ -21,4 +22,28 @@ export interface WeeklyPlan {
   days: Record<string, DailyPlan>;
   unscheduled: string[];
   dropped: string[];
+}
+
+export interface WeeklyReviewCompletionSummary {
+  completedCount: number;
+  assignedCount: number;
+}
+
+export interface WeeklyReviewSummary {
+  id: number;
+  week: string;
+  interviewedAt: string;
+  weeklyGoals: string[];
+  dayCount: number;
+  taskCount: number;
+  completionSummary: WeeklyReviewCompletionSummary | null;
+}
+
+export interface WeeklyReviewRecord extends WeeklyReviewSummary {
+  plan: WeeklyPlan;
+}
+
+export interface FinalizedWeeklyReview {
+  reviewId: number;
+  plan: WeeklyPlan;
 }
