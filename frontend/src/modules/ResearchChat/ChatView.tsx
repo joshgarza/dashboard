@@ -2,34 +2,46 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { config } from '@/config';
 import { ContextFilesPopover } from './ContextFilesPopover.tsx';
 import { MarkdownMessage } from './MarkdownMessage.tsx';
-import type { ChatMessage, ResearchChatState, ResearchFileInfo } from './types.ts';
+import type {
+  ChatMessage,
+  ResearchChatState,
+  ResearchChatThread,
+  ResearchChatThreadSummary,
+  ResearchFileInfo,
+} from './types.ts';
 
 type StreamPhase = 'thinking' | 'working' | 'writing' | null;
 
 interface ChatViewProps {
   chatId: string | null;
+  chatTitle: string;
+  loading: boolean;
   files: ResearchFileInfo[];
   messages: ChatMessage[];
   selectedFiles: string[];
-  sessionId: string | null;
   onSelectFiles: (files: string[]) => void;
   filesLoading: boolean;
-  onPersistChat: (chat: ResearchChatState) => string;
-  onUpdateChat: (chatId: string, updates: Partial<ResearchChatState>) => void;
+  onCreateChat: (chat: ResearchChatThread) => void;
+  onUpdateChat: (chatId: string | null, updates: Partial<ResearchChatState>) => void;
+  onSyncChat: (chatId: string) => Promise<void>;
   onStreamingChange: (streaming: boolean) => void;
+  onOpenSidebar: () => void;
 }
 
 export function ChatView({
   chatId,
+  chatTitle,
+  loading,
   files,
   messages,
   selectedFiles,
-  sessionId,
   onSelectFiles,
   filesLoading,
-  onPersistChat,
+  onCreateChat,
   onUpdateChat,
+  onSyncChat,
   onStreamingChange,
+  onOpenSidebar,
 }: ChatViewProps) {
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -40,20 +52,20 @@ export function ChatView({
   const abortRef = useRef<AbortController | null>(null);
   const workingTimerRef = useRef<number | null>(null);
   const messagesRef = useRef(messages);
-  const sessionIdRef = useRef(sessionId);
   const selectedFilesRef = useRef(selectedFiles);
+  const chatIdRef = useRef(chatId);
 
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
   useEffect(() => {
-    sessionIdRef.current = sessionId;
-  }, [sessionId]);
-
-  useEffect(() => {
     selectedFilesRef.current = selectedFiles;
   }, [selectedFiles]);
+
+  useEffect(() => {
+    chatIdRef.current = chatId;
+  }, [chatId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -89,37 +101,32 @@ export function ChatView({
   }, [onStreamingChange, streaming]);
 
   const resizeTextarea = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
     const maxHeight = 6 * 24;
-    ta.style.height = `${Math.min(ta.scrollHeight, maxHeight)}px`;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, maxHeight)}px`;
   }, []);
 
   useEffect(() => {
     resizeTextarea();
   }, [input, resizeTextarea]);
 
+  function applyMessageUpdate(nextMessages: ChatMessage[], activeChatId: string | null) {
+    messagesRef.current = nextMessages;
+    onUpdateChat(activeChatId, { messages: nextMessages });
+  }
+
   async function handleSend() {
     const trimmed = input.trim();
-    if (!trimmed || streaming) return;
+    if (!trimmed || streaming || loading) return;
 
     const userMessage: ChatMessage = { role: 'user', content: trimmed };
-    const updatedMessages = [...messagesRef.current, userMessage];
-    const currentSelectedFiles = selectedFilesRef.current;
-    const currentSessionId = sessionIdRef.current;
-
-    const persistedChatId = onPersistChat({
-      messages: updatedMessages,
-      sessionId: currentSessionId,
-      selectedFiles: currentSelectedFiles,
-    });
-
     const assistantMessage: ChatMessage = { role: 'assistant', content: '' };
-    const nextMessages = [...updatedMessages, assistantMessage];
-    messagesRef.current = nextMessages;
-    onUpdateChat(persistedChatId, { messages: nextMessages });
+    const currentSelectedFiles = selectedFilesRef.current;
+    let resolvedChatId = chatIdRef.current;
 
+    applyMessageUpdate([...messagesRef.current, userMessage, assistantMessage], resolvedChatId);
     setInput('');
     setStreaming(true);
     beginStreamPhases();
@@ -128,27 +135,25 @@ export function ChatView({
     abortRef.current = controller;
 
     try {
-      const res = await fetch(`${config.apiBaseUrl}/api/research/chat`, {
+      const response = await fetch(`${config.apiBaseUrl}/api/research/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          chatId: resolvedChatId,
           message: trimmed,
-          messages: updatedMessages.slice(0, -1),
           files: currentSelectedFiles,
-          sessionId: currentSessionId,
         }),
         signal: controller.signal,
       });
 
-      if (!res.ok || !res.body) {
-        const erroredMessages = [...messagesRef.current];
-        erroredMessages[erroredMessages.length - 1] = { role: 'assistant', content: 'Error: Failed to get response' };
-        messagesRef.current = erroredMessages;
-        onUpdateChat(persistedChatId, { messages: erroredMessages });
+      if (!response.ok || !response.body) {
+        const failedMessages = [...messagesRef.current];
+        failedMessages[failedMessages.length - 1] = { role: 'assistant', content: 'Error: Failed to get response' };
+        applyMessageUpdate(failedMessages, resolvedChatId);
         return;
       }
 
-      const reader = res.body.getReader();
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
 
@@ -167,11 +172,24 @@ export function ChatView({
           if (payload === '[DONE]') continue;
 
           try {
-            const parsed = JSON.parse(payload);
-            if (parsed.type === 'session_id' && typeof parsed.sessionId === 'string') {
-              sessionIdRef.current = parsed.sessionId;
-              onUpdateChat(persistedChatId, { sessionId: parsed.sessionId });
-            } else if (parsed.type === 'content_block_delta' && parsed.text) {
+            const parsed = JSON.parse(payload) as {
+              type?: string;
+              text?: string;
+              chat?: ResearchChatThreadSummary;
+            };
+
+            if (parsed.type === 'chat_created' && parsed.chat) {
+              resolvedChatId = parsed.chat.id;
+              chatIdRef.current = parsed.chat.id;
+              onCreateChat({
+                ...parsed.chat,
+                messages: messagesRef.current,
+                selectedFiles: currentSelectedFiles,
+              });
+              continue;
+            }
+
+            if (parsed.type === 'content_block_delta' && parsed.text) {
               clearWorkingTimer();
               setStreamPhase('writing');
               const streamedMessages = [...messagesRef.current];
@@ -180,22 +198,20 @@ export function ChatView({
                 ...last,
                 content: last.content + parsed.text,
               };
-              messagesRef.current = streamedMessages;
-              onUpdateChat(persistedChatId, { messages: streamedMessages });
+              applyMessageUpdate(streamedMessages, resolvedChatId);
             }
           } catch {
             // Skip malformed lines.
           }
         }
       }
-    } catch (err) {
-      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
         const failedMessages = [...messagesRef.current];
         const last = failedMessages[failedMessages.length - 1];
         if (last.role === 'assistant' && !last.content) {
           failedMessages[failedMessages.length - 1] = { role: 'assistant', content: 'Error: Connection failed' };
-          messagesRef.current = failedMessages;
-          onUpdateChat(persistedChatId, { messages: failedMessages });
+          applyMessageUpdate(failedMessages, resolvedChatId);
         }
       }
     } finally {
@@ -203,22 +219,25 @@ export function ChatView({
       clearWorkingTimer();
       setStreamPhase(null);
       setStreaming(false);
+      if (resolvedChatId) {
+        await onSyncChat(resolvedChatId);
+      }
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void handleSend();
     }
   }
 
   function removeFile(key: string) {
-    onSelectFiles(selectedFiles.filter(selectedKey => selectedKey !== key));
+    onSelectFiles(selectedFiles.filter((selectedKey) => selectedKey !== key));
   }
 
   const selectedFileInfos = selectedFiles
-    .map(key => files.find(file => file.key === key))
+    .map((key) => files.find((file) => file.key === key))
     .filter(Boolean) as ResearchFileInfo[];
   const activeAssistantIndex = streaming ? messages.length - 1 : -1;
   const streamStatus = streamPhase === 'working'
@@ -229,14 +248,42 @@ export function ChatView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="border-b border-border/70 bg-background/95 backdrop-blur md:hidden">
+        <div className="mx-auto flex w-full max-w-[52rem] items-center gap-3 px-4 py-3">
+          <button
+            type="button"
+            onClick={onOpenSidebar}
+            aria-label="Open chats"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 6h18" />
+              <path d="M3 12h18" />
+              <path d="M3 18h18" />
+            </svg>
+          </button>
+
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium text-foreground">{chatId ? chatTitle : 'New chat'}</div>
+            <div className="text-xs text-muted-foreground">{chatId ? 'Saved conversation' : 'Draft'}</div>
+          </div>
+        </div>
+      </div>
+
       <div className="app-scrollbar flex-1 min-h-0 overflow-y-auto">
         <div className="mx-auto w-full max-w-[52rem] px-4 py-4 sm:px-6 lg:px-8">
-          {messages.length === 0 ? (
+          {loading ? (
+            <div className="flex min-h-[40vh] items-center justify-center">
+              <div className="rounded-2xl border border-border bg-background/80 px-4 py-3 text-sm text-muted-foreground">
+                Loading chat...
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="flex min-h-[50vh] items-center justify-center">
               <div className="space-y-2 text-center">
                 <p className="text-lg text-muted-foreground">Start a new research chat</p>
                 <p className="text-sm text-muted-foreground/60">
-                  Ask a question, attach context files, or revisit a saved conversation from the sidebar.
+                  Ask a question, attach context files, or reopen a saved conversation from the sidebar.
                 </p>
               </div>
             </div>
@@ -275,7 +322,7 @@ export function ChatView({
         <div className="mx-auto w-full max-w-[52rem] px-4 pt-2 pb-4 sm:px-6 lg:px-8">
           {selectedFileInfos.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5 px-1">
-              {selectedFileInfos.map(file => (
+              {selectedFileInfos.map((file) => (
                 <span
                   key={file.key}
                   className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground"
@@ -297,10 +344,10 @@ export function ChatView({
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={(event) => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Ask about your research..."
-              disabled={streaming}
+              disabled={streaming || loading}
               rows={1}
               className="w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 pb-1 text-base placeholder:text-muted-foreground focus:outline-none disabled:opacity-50 sm:text-sm"
               style={{ maxHeight: '144px' }}
@@ -316,8 +363,8 @@ export function ChatView({
 
               <button
                 type="button"
-                onClick={handleSend}
-                disabled={streaming || !input.trim()}
+                onClick={() => void handleSend()}
+                disabled={streaming || loading || !input.trim()}
                 aria-label={streaming ? streamStatus : 'Send message'}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-30"
               >

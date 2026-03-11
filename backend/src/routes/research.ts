@@ -3,7 +3,10 @@ import {
   listResearchFiles,
   getQueue,
   enqueueTopic,
-  streamChatMessage,
+  getResearchChat,
+  listResearchChats,
+  streamPersistedChatMessage,
+  updateResearchChatFiles,
 } from '../services/researchService.js';
 
 const router = Router();
@@ -40,22 +43,78 @@ router.post('/research/queue', async (req: Request, res: Response, next: NextFun
   }
 });
 
+router.get('/research/chats', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const chats = listResearchChats();
+    res.json({ success: true, data: chats });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/research/chats/:chatId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const chatId = Array.isArray(req.params.chatId) ? req.params.chatId[0] : req.params.chatId;
+    const chat = getResearchChat(chatId);
+    if (!chat) {
+      res.status(404).json({ success: false, error: 'research chat not found' });
+      return;
+    }
+
+    res.json({ success: true, data: chat });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/research/chats/:chatId', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const chatId = Array.isArray(req.params.chatId) ? req.params.chatId[0] : req.params.chatId;
+    const { selectedFiles } = req.body;
+    if (!Array.isArray(selectedFiles) || selectedFiles.some((file) => typeof file !== 'string')) {
+      res.status(400).json({ success: false, error: 'selectedFiles must be an array of strings' });
+      return;
+    }
+
+    const chat = updateResearchChatFiles(chatId, selectedFiles);
+    if (!chat) {
+      res.status(404).json({ success: false, error: 'research chat not found' });
+      return;
+    }
+
+    res.json({ success: true, data: chat });
+  } catch (err) {
+    if (err instanceof Error && err.message === 'Invalid file key') {
+      res.status(400).json({ success: false, error: err.message });
+      return;
+    }
+    next(err);
+  }
+});
+
 router.post('/research/chat', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { message, messages, files, sessionId } = req.body;
+    const { message, chatId, files } = req.body;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ success: false, error: 'message is required' });
       return;
     }
 
-    await streamChatMessage(
+    await streamPersistedChatMessage(
       message,
-      Array.isArray(messages) ? messages : [],
+      typeof chatId === 'string' ? chatId : null,
       Array.isArray(files) ? files : [],
-      typeof sessionId === 'string' ? sessionId : null,
       res,
     );
   } catch (err) {
+    if (err instanceof Error && err.message === 'Research chat not found') {
+      res.status(404).json({ success: false, error: err.message });
+      return;
+    }
+    if (err instanceof Error && err.message === 'Invalid file key') {
+      res.status(400).json({ success: false, error: err.message });
+      return;
+    }
     if (res.headersSent) {
       console.error('Chat stream error:', err);
       return;

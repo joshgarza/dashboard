@@ -5,15 +5,23 @@ export interface ChatMessage {
 
 export interface ResearchChatState {
   messages: ChatMessage[];
-  sessionId: string | null;
   selectedFiles: string[];
 }
 
-export interface ResearchChatThread extends ResearchChatState {
+export interface ResearchChatThreadSummary {
   id: string;
   title: string;
   createdAt: string;
   updatedAt: string;
+  messageCount: number;
+}
+
+export interface ResearchChatThread extends ResearchChatState, ResearchChatThreadSummary {
+}
+
+export interface ResearchChatCreatedEvent {
+  type: 'chat_created';
+  chat: ResearchChatThreadSummary;
 }
 
 export interface ResearchFileInfo {

@@ -9,8 +9,11 @@ interface StreamCodexTurnOptions {
   sessionId?: string | null;
   input: string;
   response: Response;
+  initialEvents?: Array<Record<string, unknown>>;
   transformText?: (text: string) => string;
+  onSessionId?: (sessionId: string) => void;
   onComplete?: (fullResponseText: string) => void;
+  onError?: (errorMessage: string) => void;
 }
 
 interface CodexThreadState {
@@ -74,6 +77,17 @@ function writeSse(response: Response, payload: Record<string, unknown>): void {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+function ensureSseHeaders(response: Response): void {
+  if (response.headersSent) {
+    return;
+  }
+
+  response.setHeader('Content-Type', 'text/event-stream');
+  response.setHeader('Cache-Control', 'no-cache');
+  response.setHeader('Connection', 'keep-alive');
+  response.flushHeaders();
+}
+
 function getVisibleDelta(
   previousRawText: string,
   nextRawText: string,
@@ -98,8 +112,11 @@ export async function streamCodexTurn({
   sessionId,
   input,
   response,
+  initialEvents = [],
   transformText = (text) => text,
+  onSessionId,
   onComplete,
+  onError,
 }: StreamCodexTurnOptions): Promise<void> {
   const state = getThreadState(kind, sessionId);
   const itemText = new Map<string, string>();
@@ -108,10 +125,11 @@ export async function streamCodexTurn({
   let completed = false;
   const controller = new AbortController();
 
-  response.setHeader('Content-Type', 'text/event-stream');
-  response.setHeader('Cache-Control', 'no-cache');
-  response.setHeader('Connection', 'keep-alive');
-  response.flushHeaders();
+  ensureSseHeaders(response);
+
+  for (const payload of initialEvents) {
+    writeSse(response, payload);
+  }
 
   response.on('close', () => {
     if (!response.writableEnded) {
@@ -126,6 +144,7 @@ export async function streamCodexTurn({
       if (event.type === 'thread.started') {
         const record = sessionManager.createOrBind(resolvedSessionId, kind, event.thread_id);
         resolvedSessionId = record.id;
+        onSessionId?.(record.id);
         writeSse(response, { type: 'session_id', sessionId: record.id });
         continue;
       }
@@ -159,6 +178,7 @@ export async function streamCodexTurn({
     if (!resolvedSessionId && state.thread.id) {
       const record = sessionManager.create(kind, state.thread.id);
       resolvedSessionId = record.id;
+      onSessionId?.(record.id);
       writeSse(response, { type: 'session_id', sessionId: record.id });
     }
 
@@ -169,6 +189,7 @@ export async function streamCodexTurn({
     completed = true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    onError?.(message);
     writeSse(response, { type: 'content_block_delta', text: `Error: ${message}` });
     throw error;
   } finally {

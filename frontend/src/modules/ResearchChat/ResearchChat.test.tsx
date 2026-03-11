@@ -8,15 +8,26 @@ jest.unstable_mockModule('@/config', () => ({
 }));
 
 jest.unstable_mockModule('./ChatView.tsx', () => ({
-  ChatView: ({ chatId, messages, selectedFiles, onPersistChat }: {
+  ChatView: ({
+    chatId,
+    messages,
+    selectedFiles,
+    onCreateChat,
+    onOpenSidebar,
+  }: {
     chatId: string | null;
     messages: Array<{ role: string; content: string }>;
     selectedFiles: string[];
-    onPersistChat: (chat: {
+    onCreateChat: (chat: {
+      id: string;
+      title: string;
+      createdAt: string;
+      updatedAt: string;
+      messageCount: number;
       messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-      sessionId: string | null;
       selectedFiles: string[];
-    }) => string;
+    }) => void;
+    onOpenSidebar: () => void;
   }) => (
     <div>
       <div data-testid="active-chat-id">{chatId ?? 'draft'}</div>
@@ -24,14 +35,19 @@ jest.unstable_mockModule('./ChatView.tsx', () => ({
       <div data-testid="selected-files">{selectedFiles.join(',')}</div>
       <button
         type="button"
-        onClick={() => onPersistChat({
-          messages: [{ role: 'user', content: 'Persistent cache invalidation question' }],
-          sessionId: null,
+        onClick={() => onCreateChat({
+          id: 'chat-2',
+          title: 'Database-backed history',
+          createdAt: '2026-03-10T00:00:00.000Z',
+          updatedAt: '2026-03-10T00:00:00.000Z',
+          messageCount: 1,
+          messages: [{ role: 'user', content: 'Database-backed history' }],
           selectedFiles,
         })}
       >
-        Persist draft chat
+        Create saved chat
       </button>
+      <button type="button" onClick={onOpenSidebar}>Open sidebar</button>
     </div>
   ),
 }));
@@ -40,48 +56,90 @@ const { ResearchChat } = await import('./ResearchChat.tsx');
 
 describe('ResearchChat', () => {
   beforeEach(() => {
-    localStorage.clear();
-    globalThis.fetch = jest.fn(() =>
-      Promise.resolve({
-        json: () => Promise.resolve({ success: true, data: [] }),
-      } as Response)
-    ) as typeof fetch;
+    globalThis.fetch = jest.fn((input: string | URL | Request) => {
+      const url = String(input);
+
+      if (url.endsWith('/api/research/files')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ success: true, data: [] }),
+        } as Response);
+      }
+
+      if (url.endsWith('/api/research/chats')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: [{
+              id: 'chat-1',
+              title: 'Existing DB chat',
+              createdAt: '2026-03-09T00:00:00.000Z',
+              updatedAt: '2026-03-09T00:00:00.000Z',
+              messageCount: 2,
+            }],
+          }),
+        } as Response);
+      }
+
+      if (url.endsWith('/api/research/chats/chat-1')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: {
+              id: 'chat-1',
+              title: 'Existing DB chat',
+              createdAt: '2026-03-09T00:00:00.000Z',
+              updatedAt: '2026-03-09T00:00:00.000Z',
+              messageCount: 2,
+              messages: [
+                { role: 'user', content: 'Existing question' },
+                { role: 'assistant', content: 'Existing answer' },
+              ],
+              selectedFiles: [],
+            },
+          }),
+        } as Response);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
   });
 
-  it('defaults to a fresh draft chat even when saved chats exist, and migrates the legacy chat storage', async () => {
-    localStorage.setItem('research-messages', JSON.stringify([
-      { role: 'user', content: 'Legacy database cache question' },
-      { role: 'assistant', content: 'Legacy answer' },
-    ]));
-    localStorage.setItem('research-session-id', 'legacy-session');
-
+  it('defaults to a fresh draft chat even when saved chats exist in the database', async () => {
     render(<ResearchChat />);
 
     await waitFor(() => {
-      expect(screen.getByText('Legacy database cache question')).toBeInTheDocument();
+      expect(screen.getByText('Existing DB chat')).toBeInTheDocument();
     });
 
     expect(screen.getByRole('button', { name: /New chat/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('active-chat-id')).toHaveTextContent('draft');
     expect(screen.getByTestId('message-count')).toHaveTextContent('0');
 
-    fireEvent.click(screen.getByText('Legacy database cache question').closest('button') as HTMLButtonElement);
+    fireEvent.click(screen.getByText('Existing DB chat').closest('button') as HTMLButtonElement);
 
-    expect(screen.getByTestId('message-count')).toHaveTextContent('2');
-    expect(localStorage.getItem('research-messages')).toBeNull();
-    expect(localStorage.getItem('research-session-id')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByTestId('active-chat-id')).toHaveTextContent('chat-1');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('message-count')).toHaveTextContent('2');
+    });
   });
 
   it('creates a saved chat from the draft and lets you return to a blank new chat', async () => {
     render(<ResearchChat />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Persist draft chat' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create saved chat' }));
 
     await waitFor(() => {
-      expect(screen.getByText('Persistent cache invalidation question')).toBeInTheDocument();
+      expect(screen.getByText('Database-backed history')).toBeInTheDocument();
     });
 
     expect(screen.getByRole('button', { name: /New chat/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('active-chat-id')).toHaveTextContent('chat-2');
     expect(screen.getByTestId('message-count')).toHaveTextContent('1');
 
     fireEvent.click(screen.getByRole('button', { name: /New chat/ }));
@@ -89,5 +147,19 @@ describe('ResearchChat', () => {
     expect(screen.getByRole('button', { name: /New chat/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('active-chat-id')).toHaveTextContent('draft');
     expect(screen.getByTestId('message-count')).toHaveTextContent('0');
+  });
+
+  it('opens the mobile sidebar drawer from the chat view trigger', async () => {
+    render(<ResearchChat />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open sidebar' }));
+
+    expect(screen.getByRole('dialog', { name: 'Research chats' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close sidebar' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Research chats' })).not.toBeInTheDocument();
+    });
   });
 });

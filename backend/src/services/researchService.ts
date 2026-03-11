@@ -1,12 +1,17 @@
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import type Database from 'better-sqlite3';
 import type { Response } from 'express';
 import { getHopperDb } from './hopperDb.js';
+import { initResearchSchema } from './hopperSchema.js';
 import { streamCodexTurn } from './codexProvider.js';
 import { sessionManager } from './sessionManager.js';
 
 const RESEARCH_PATH = process.env.RESEARCH_PATH || '/home/josh/coding/claude/research';
 const KEY_PATTERN = /^(research|principles)\/[a-zA-Z0-9._-]+\.md$/;
+
+initResearchSchema();
 
 interface ResearchFile {
   key: string;
@@ -46,10 +51,67 @@ interface EnqueueInput {
   model?: 'sonnet' | 'opus' | 'haiku';
 }
 
-interface ChatMessage {
+export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
 }
+
+export interface ResearchChatSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface ResearchChatThread extends ResearchChatSummary {
+  messages: ChatMessage[];
+  selectedFiles: string[];
+}
+
+interface ResearchChatThreadRow {
+  id: string;
+  title: string;
+  session_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ResearchChatMessageRow {
+  role: ChatMessage['role'];
+  content: string;
+}
+
+interface ResearchChatFileRow {
+  file_key: string;
+}
+
+interface QueueSvcRow {
+  svc_id: number;
+  thought_id: number;
+  raw_input: string;
+  context: string | null;
+  thought_created_at: string;
+  status: string;
+  priority: number;
+  model: string;
+  max_attempts: number;
+  attempts: number;
+  output_file: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+}
+
+const CHAT_THREADS_SELECT = `
+  SELECT
+    t.id,
+    t.title,
+    t.session_id,
+    t.created_at,
+    t.updated_at
+  FROM svc_research_chat_threads t
+`;
 
 function parseFrontmatter(content: string): Record<string, string | string[]> {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
@@ -60,7 +122,6 @@ function parseFrontmatter(content: string): Record<string, string | string[]> {
     const kvMatch = line.match(/^(\w+):\s*(.+)$/);
     if (kvMatch) {
       const [, key, value] = kvMatch;
-      // Handle YAML arrays like [tag1, tag2]
       if (value.startsWith('[') && value.endsWith(']')) {
         result[key] = value.slice(1, -1).split(',').map(t => t.trim());
       } else {
@@ -90,6 +151,124 @@ function scanDir(dirPath: string, type: 'research' | 'principles'): ResearchFile
     });
 }
 
+function validateFileKeys(fileKeys: string[]): void {
+  for (const key of fileKeys) {
+    if (typeof key !== 'string' || !KEY_PATTERN.test(key)) {
+      throw new Error('Invalid file key');
+    }
+  }
+}
+
+function buildChatTitle(message: string): string {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  return normalized.length > 48 ? `${normalized.slice(0, 48).trimEnd()}...` : normalized;
+}
+
+function touchResearchChat(db: Database.Database, chatId: string): void {
+  db.prepare(`
+    UPDATE svc_research_chat_threads
+    SET updated_at = datetime('now')
+    WHERE id = ?
+  `).run(chatId);
+}
+
+function writeResearchChatFiles(db: Database.Database, chatId: string, fileKeys: string[]): void {
+  db.prepare('DELETE FROM svc_research_chat_thread_files WHERE thread_id = ?').run(chatId);
+
+  const insert = db.prepare(`
+    INSERT INTO svc_research_chat_thread_files (thread_id, file_key, sort_order)
+    VALUES (?, ?, ?)
+  `);
+
+  fileKeys.forEach((fileKey, index) => {
+    insert.run(chatId, fileKey, index);
+  });
+}
+
+function getNextResearchChatSortOrder(db: Database.Database, chatId: string): number {
+  const row = db.prepare(`
+    SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort_order
+    FROM svc_research_chat_messages
+    WHERE thread_id = ?
+  `).get(chatId) as { next_sort_order: number };
+
+  return row.next_sort_order;
+}
+
+function appendResearchChatMessage(
+  db: Database.Database,
+  chatId: string,
+  role: ChatMessage['role'],
+  content: string,
+): void {
+  db.prepare(`
+    INSERT INTO svc_research_chat_messages (thread_id, role, content, sort_order)
+    VALUES (?, ?, ?, ?)
+  `).run(chatId, role, content, getNextResearchChatSortOrder(db, chatId));
+}
+
+function getResearchChatThreadRow(
+  db: Database.Database,
+  chatId: string,
+): ResearchChatThreadRow | null {
+  const row = db.prepare(`${CHAT_THREADS_SELECT} WHERE t.id = ?`).get(chatId) as ResearchChatThreadRow | undefined;
+  return row ?? null;
+}
+
+function getResearchChatMessages(db: Database.Database, chatId: string): ChatMessage[] {
+  const rows = db.prepare(`
+    SELECT role, content
+    FROM svc_research_chat_messages
+    WHERE thread_id = ?
+    ORDER BY sort_order ASC
+  `).all(chatId) as ResearchChatMessageRow[];
+
+  return rows.map((row) => ({ role: row.role, content: row.content }));
+}
+
+function getResearchChatSelectedFiles(db: Database.Database, chatId: string): string[] {
+  const rows = db.prepare(`
+    SELECT file_key
+    FROM svc_research_chat_thread_files
+    WHERE thread_id = ?
+    ORDER BY sort_order ASC
+  `).all(chatId) as ResearchChatFileRow[];
+
+  return rows.map((row) => row.file_key);
+}
+
+function getResearchChatMessageCount(db: Database.Database, chatId: string): number {
+  const row = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM svc_research_chat_messages
+    WHERE thread_id = ?
+  `).get(chatId) as { count: number };
+
+  return row.count;
+}
+
+function mapResearchChatSummary(
+  db: Database.Database,
+  thread: ResearchChatThreadRow,
+): ResearchChatSummary {
+  return {
+    id: thread.id,
+    title: thread.title,
+    createdAt: thread.created_at,
+    updatedAt: thread.updated_at,
+    messageCount: getResearchChatMessageCount(db, thread.id),
+  };
+}
+
+function persistResearchChatSessionId(chatId: string, sessionId: string): void {
+  const db = getHopperDb();
+  db.prepare(`
+    UPDATE svc_research_chat_threads
+    SET session_id = ?
+    WHERE id = ?
+  `).run(sessionId, chatId);
+}
+
 export function listResearchFiles(): ResearchFile[] {
   const researchDir = path.join(RESEARCH_PATH, 'research');
   const principlesDir = path.join(RESEARCH_PATH, 'principles');
@@ -104,33 +283,23 @@ export function loadFileContent(key: string): string {
   if (!KEY_PATTERN.test(key)) {
     throw new Error('Invalid file key');
   }
+
   const filePath = path.join(RESEARCH_PATH, key);
   if (!fs.existsSync(filePath)) {
     throw new Error('File not found');
   }
+
   return fs.readFileSync(filePath, 'utf-8');
 }
 
-type SvcRow = {
-  svc_id: number;
-  thought_id: number;
-  raw_input: string;
-  context: string | null;
-  thought_created_at: string;
-  status: string;
-  priority: number;
-  model: string;
-  max_attempts: number;
-  attempts: number;
-  output_file: string | null;
-  started_at: string | null;
-  completed_at: string | null;
-  error: string | null;
-};
-
-function svcRowToQueueItem(row: SvcRow): QueueItem {
+function queueSvcRowToQueueItem(row: QueueSvcRow): QueueItem {
   let ctx: { topic?: string; tags?: string[] } = {};
-  try { ctx = JSON.parse(row.context ?? '{}'); } catch { /* ignore */ }
+  try {
+    ctx = JSON.parse(row.context ?? '{}');
+  } catch {
+    // Ignore malformed hopper context payloads.
+  }
+
   return {
     id: `t-${row.thought_id}`,
     topic: ctx.topic ?? row.raw_input,
@@ -173,8 +342,9 @@ export function getQueue(): Queue {
   const db = getHopperDb();
   const rows = db.prepare(
     `${SVC_SELECT} ORDER BY svc.priority ASC, svc.created_at ASC`
-  ).all() as SvcRow[];
-  return { items: rows.map(svcRowToQueueItem) };
+  ).all() as QueueSvcRow[];
+
+  return { items: rows.map(queueSvcRowToQueueItem) };
 }
 
 export function enqueueTopic(input: EnqueueInput): QueueItem {
@@ -191,8 +361,8 @@ export function enqueueTopic(input: EnqueueInput): QueueItem {
   for (const tagName of tags) {
     let tag = db.prepare('SELECT id FROM tags WHERE name = ?').get(tagName) as { id: number } | undefined;
     if (!tag) {
-      const r = db.prepare('INSERT INTO tags (name) VALUES (?)').run(tagName);
-      tag = { id: r.lastInsertRowid as number };
+      const result = db.prepare('INSERT INTO tags (name) VALUES (?)').run(tagName);
+      tag = { id: result.lastInsertRowid as number };
     }
     db.prepare('INSERT OR IGNORE INTO thought_tags (thought_id, tag_id) VALUES (?, ?)').run(thoughtId, tag.id);
   }
@@ -206,30 +376,83 @@ export function enqueueTopic(input: EnqueueInput): QueueItem {
   `).run(thoughtId, priority, model);
   const svcId = svcResult.lastInsertRowid as number;
 
-  const row = db.prepare(`${SVC_SELECT} WHERE svc.id = ?`).get(svcId) as SvcRow;
-  return svcRowToQueueItem(row);
+  const row = db.prepare(`${SVC_SELECT} WHERE svc.id = ?`).get(svcId) as QueueSvcRow;
+  return queueSvcRowToQueueItem(row);
 }
 
-export function streamChatMessage(
+export function listResearchChats(): ResearchChatSummary[] {
+  const db = getHopperDb();
+  const rows = db.prepare(`
+    SELECT
+      t.id,
+      t.title,
+      t.session_id,
+      t.created_at,
+      t.updated_at
+    FROM svc_research_chat_threads t
+    ORDER BY t.updated_at DESC, t.created_at DESC
+  `).all() as ResearchChatThreadRow[];
+
+  return rows.map((row) => mapResearchChatSummary(db, row));
+}
+
+export function getResearchChat(chatId: string): ResearchChatThread | null {
+  const db = getHopperDb();
+  const thread = getResearchChatThreadRow(db, chatId);
+
+  if (!thread) {
+    return null;
+  }
+
+  return {
+    ...mapResearchChatSummary(db, thread),
+    messages: getResearchChatMessages(db, chatId),
+    selectedFiles: getResearchChatSelectedFiles(db, chatId),
+  };
+}
+
+export function updateResearchChatFiles(chatId: string, fileKeys: string[]): ResearchChatThread | null {
+  validateFileKeys(fileKeys);
+
+  const db = getHopperDb();
+  const transaction = db.transaction(() => {
+    const thread = getResearchChatThreadRow(db, chatId);
+    if (!thread) {
+      return null;
+    }
+
+    writeResearchChatFiles(db, chatId, fileKeys);
+    touchResearchChat(db, chatId);
+    return getResearchChat(chatId);
+  });
+
+  return transaction();
+}
+
+function streamChatMessage(
   message: string,
   messages: ChatMessage[],
   fileKeys: string[],
   sessionId: string | null,
   res: Response,
+  options: {
+    chatId: string;
+    initialEvents?: Array<Record<string, unknown>>;
+  },
 ): Promise<void> {
   const hasActiveSession = !!(sessionId && sessionManager.get(sessionId, 'research'));
-  const fileContents = fileKeys.map(key => ({
+  const fileContents = fileKeys.map((key) => ({
     key,
     content: loadFileContent(key),
   }));
 
   const fileContext = fileContents
-    .map(f => `--- ${f.key} ---\n${f.content}`)
+    .map((file) => `--- ${file.key} ---\n${file.content}`)
     .join('\n\n');
 
   const systemBlock = `You are a research assistant. Answer questions, synthesize information, and help the user explore their research.\n\n${fileContext}`;
   const history = [...messages, { role: 'user' as const, content: message }]
-    .map(m => m.role === 'user' ? `Human: ${m.content}` : `Assistant: ${m.content}`)
+    .map((entry) => entry.role === 'user' ? `Human: ${entry.content}` : `Assistant: ${entry.content}`)
     .join('\n\n');
 
   const prompt = hasActiveSession
@@ -241,5 +464,101 @@ export function streamChatMessage(
     sessionId,
     input: prompt,
     response: res,
+    initialEvents: options.initialEvents,
+    onSessionId: (resolvedSessionId) => {
+      persistResearchChatSessionId(options.chatId, resolvedSessionId);
+    },
+    onComplete: (assistantResponse) => {
+      const db = getHopperDb();
+      const transaction = db.transaction(() => {
+        appendResearchChatMessage(db, options.chatId, 'assistant', assistantResponse);
+        touchResearchChat(db, options.chatId);
+      });
+      transaction();
+    },
+    onError: (errorMessage) => {
+      const db = getHopperDb();
+      const transaction = db.transaction(() => {
+        appendResearchChatMessage(db, options.chatId, 'assistant', `Error: ${errorMessage}`);
+        touchResearchChat(db, options.chatId);
+      });
+      transaction();
+    },
   });
+}
+
+export function streamPersistedChatMessage(
+  message: string,
+  chatId: string | null,
+  fileKeys: string[],
+  res: Response,
+): Promise<void> {
+  validateFileKeys(fileKeys);
+
+  const db = getHopperDb();
+  const transaction = db.transaction(() => {
+    if (chatId) {
+      const thread = getResearchChatThreadRow(db, chatId);
+      if (!thread) {
+        throw new Error('Research chat not found');
+      }
+
+      const previousMessages = getResearchChatMessages(db, chatId);
+      writeResearchChatFiles(db, chatId, fileKeys);
+      appendResearchChatMessage(db, chatId, 'user', message);
+      touchResearchChat(db, chatId);
+
+      return {
+        chatId,
+        previousMessages,
+        fileKeys,
+        sessionId: thread.session_id,
+        initialEvents: [] as Array<Record<string, unknown>>,
+      };
+    }
+
+    const nextChatId = randomUUID();
+    const title = buildChatTitle(message);
+
+    db.prepare(`
+      INSERT INTO svc_research_chat_threads (id, title, session_id)
+      VALUES (?, ?, NULL)
+    `).run(nextChatId, title);
+
+    writeResearchChatFiles(db, nextChatId, fileKeys);
+    appendResearchChatMessage(db, nextChatId, 'user', message);
+    touchResearchChat(db, nextChatId);
+
+    const thread = getResearchChatThreadRow(db, nextChatId);
+    if (!thread) {
+      throw new Error('Failed to create research chat');
+    }
+
+    return {
+      chatId: nextChatId,
+      previousMessages: [] as ChatMessage[],
+      fileKeys,
+      sessionId: null,
+      initialEvents: [
+        {
+          type: 'chat_created',
+          chat: mapResearchChatSummary(db, thread),
+        },
+      ],
+    };
+  });
+
+  const state = transaction();
+
+  return streamChatMessage(
+    message,
+    state.previousMessages,
+    state.fileKeys,
+    state.sessionId,
+    res,
+    {
+      chatId: state.chatId,
+      initialEvents: state.initialEvents,
+    },
+  );
 }

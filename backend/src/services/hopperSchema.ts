@@ -1,10 +1,11 @@
 import { getHopperDb } from './hopperDb.js';
 
-let initialized = false;
+let weeklyReviewInitialized = false;
+let researchInitialized = false;
 
 export function initWeeklyReviewSchema(): void {
-  if (initialized) return;
-  initialized = true;
+  if (weeklyReviewInitialized) return;
+  weeklyReviewInitialized = true;
 
   const db = getHopperDb();
 
@@ -47,5 +48,45 @@ export function initWeeklyReviewSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_date ON svc_weekly_review_tasks(scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_deferred_plan ON svc_weekly_review_deferred(plan_id);
     CREATE INDEX IF NOT EXISTS idx_svc_dc_thought ON svc_dashboard_completions(thought_id);
+  `);
+}
+
+export function initResearchSchema(): void {
+  if (researchInitialized) return;
+  researchInitialized = true;
+
+  const db = getHopperDb();
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS svc_research_chat_threads (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      session_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS svc_research_chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id TEXT NOT NULL REFERENCES svc_research_chat_threads(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      content TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(thread_id, sort_order)
+    );
+
+    CREATE TABLE IF NOT EXISTS svc_research_chat_thread_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id TEXT NOT NULL REFERENCES svc_research_chat_threads(id) ON DELETE CASCADE,
+      file_key TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      UNIQUE(thread_id, file_key),
+      UNIQUE(thread_id, sort_order)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_svc_rct_updated_at ON svc_research_chat_threads(updated_at);
+    CREATE INDEX IF NOT EXISTS idx_svc_rcm_thread_sort ON svc_research_chat_messages(thread_id, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_svc_rctf_thread_sort ON svc_research_chat_thread_files(thread_id, sort_order);
   `);
 }

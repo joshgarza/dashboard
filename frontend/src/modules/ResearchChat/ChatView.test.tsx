@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
-import type { ResearchChatState } from './types.ts';
+import type { ResearchChatState, ResearchChatThread } from './types.ts';
 
 jest.unstable_mockModule('@/config', () => ({
   config: {
@@ -63,7 +63,6 @@ function createControlledStream() {
 describe('ChatView', () => {
   beforeEach(() => {
     jest.useFakeTimers();
-    localStorage.clear();
     window.HTMLElement.prototype.scrollIntoView = jest.fn();
     globalThis.TextDecoder = MockTextDecoder as unknown as typeof globalThis.TextDecoder;
   });
@@ -86,27 +85,30 @@ describe('ChatView', () => {
       const [activeChatId, setActiveChatId] = useState<string | null>(null);
       const [chatState, setChatState] = useState<ResearchChatState>({
         messages: [],
-        sessionId: null,
         selectedFiles: [],
       });
 
       return (
         <ChatView
           chatId={activeChatId}
+          chatTitle={activeChatId ? 'Saved chat' : 'New chat'}
+          loading={false}
           files={[]}
           messages={chatState.messages}
           selectedFiles={chatState.selectedFiles}
-          sessionId={chatState.sessionId}
-          onSelectFiles={(files) => setChatState(prev => ({ ...prev, selectedFiles: files }))}
+          onSelectFiles={(files) => setChatState((prev) => ({ ...prev, selectedFiles: files }))}
           filesLoading={false}
-          onPersistChat={(chat) => {
-            const nextChatId = activeChatId ?? 'chat-1';
-            setActiveChatId(nextChatId);
-            setChatState(chat);
-            return nextChatId;
+          onCreateChat={(chat: ResearchChatThread) => {
+            setActiveChatId(chat.id);
+            setChatState({
+              messages: chat.messages,
+              selectedFiles: chat.selectedFiles,
+            });
           }}
-          onUpdateChat={(_chatId, updates) => setChatState(prev => ({ ...prev, ...updates }))}
+          onUpdateChat={(_chatId, updates) => setChatState((prev) => ({ ...prev, ...updates }))}
+          onSyncChat={async () => {}}
           onStreamingChange={() => {}}
+          onOpenSidebar={() => {}}
         />
       );
     }
@@ -128,6 +130,19 @@ describe('ChatView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Working...')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      stream.enqueue(`data: ${JSON.stringify({
+        type: 'chat_created',
+        chat: {
+          id: 'chat-1',
+          title: 'Explain edge caching',
+          createdAt: '2026-03-10T00:00:00.000Z',
+          updatedAt: '2026-03-10T00:00:00.000Z',
+          messageCount: 1,
+        },
+      })}\n\n`);
     });
 
     await act(async () => {
