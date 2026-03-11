@@ -24,6 +24,34 @@ export interface WeeklyReviewCompletionSummary {
   assignedCount: number;
 }
 
+export interface WeeklyReviewProfileStateEntry {
+  key: string;
+  value: string | number | boolean;
+  confidence: number;
+  updatedAt: string;
+}
+
+export interface WeeklyReviewMemoryEvidence {
+  sourceType: string;
+  sourceRef: string;
+  excerpt: string;
+  weight: number;
+}
+
+export interface WeeklyReviewMemoryItem {
+  id: number;
+  kind: string;
+  normalizedKey: string | null;
+  summary: string;
+  detail: Record<string, unknown>;
+  confidence: number;
+  status: 'active' | 'superseded' | 'archived';
+  reviewSnapshotId: number | null;
+  supersedesMemoryId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface WeeklyReviewSummary {
   id: number;
   week: string;
@@ -78,5 +106,7 @@ export interface WeeklyContext {
   currentTodos: string;
   previousWeekSummary: string;
   currentWeekContext: string; // non-empty when a plan already exists for this week (redo case)
-  profile: string;
+  profileStateSummary: string;
+  relevantMemorySummary: string;
+  recentOutcomeSummary: string;
 }

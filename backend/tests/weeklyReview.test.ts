@@ -22,6 +22,14 @@ jest.unstable_mockModule('../src/services/hopperDb.js', () => ({
   getHopperDb: () => db,
 }));
 
+const mockRunCodexStructuredTask = jest.fn();
+const mockStreamCodexTurn = jest.fn();
+
+jest.unstable_mockModule('../src/services/codexProvider.js', () => ({
+  runCodexStructuredTask: mockRunCodexStructuredTask,
+  streamCodexTurn: mockStreamCodexTurn,
+}));
+
 // fs mock for learning-profile.yaml reads
 jest.unstable_mockModule('fs', () => ({
   existsSync: () => false,
@@ -36,6 +44,11 @@ jest.unstable_mockModule('fs', () => ({
 }));
 
 const { weeklyReviewRouter } = await import('../src/routes/weeklyReview.js');
+const {
+  generatePlan,
+  getWeeklyContext,
+  updateProfileAfterReview,
+} = await import('../src/services/weeklyReviewService.js');
 
 const app = express();
 app.use(express.json());
@@ -91,6 +104,12 @@ function insertPlan(week: string, goals: string[] = ['Goal A', 'Goal B']): { id:
   return db.prepare('SELECT id FROM svc_weekly_review_plans WHERE week = ?').get(week) as { id: number };
 }
 
+function insertThought(id: number, rawInput: string): void {
+  db.prepare(
+    'INSERT INTO thoughts (id, raw_input, category) VALUES (?, ?, ?)'
+  ).run(id, rawInput, 'todo');
+}
+
 function insertTask(planId: number, date: string, text: string, order: number, completed = false, focus = 'Test focus') {
   db.prepare(
     'INSERT INTO svc_weekly_review_tasks (plan_id, scheduled_date, day_focus, task_text, sort_order, completed) VALUES (?, ?, ?, ?, ?, ?)'
@@ -130,10 +149,17 @@ function insertReviewSnapshot({
 
 describe('Weekly Review API', () => {
   beforeEach(() => {
+    mockRunCodexStructuredTask.mockReset();
+    mockStreamCodexTurn.mockReset();
+    db.exec('DELETE FROM svc_weekly_review_memory_vectors');
+    db.exec('DELETE FROM svc_weekly_review_memory_evidence');
+    db.exec('DELETE FROM svc_weekly_review_profile_state');
+    db.exec('DELETE FROM svc_weekly_review_memory_items');
     db.exec('DELETE FROM svc_weekly_review_review_snapshots');
     db.exec('DELETE FROM svc_weekly_review_deferred');
     db.exec('DELETE FROM svc_weekly_review_tasks');
     db.exec('DELETE FROM svc_weekly_review_plans');
+    db.exec('DELETE FROM thoughts');
   });
 
   describe('GET /api/weekly-review/status', () => {
@@ -371,6 +397,124 @@ describe('Weekly Review API', () => {
 
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
+    });
+  });
+
+  describe('structured learning profile persistence', () => {
+    it('persists profile state, atomic memories, and fixed-size context summaries after finalize', async () => {
+      insertThought(1, 'Implement weekly review memory migration');
+
+      const pastWeek = getTestPreviousWeekString();
+      const pastPlan = insertPlan(pastWeek, ['Past goal']);
+      insertTask(pastPlan.id, '2026-03-03', 'Completed task', 0, true, 'Past focus');
+      insertTask(pastPlan.id, '2026-03-04', 'Missed task', 1, false, 'Past focus');
+
+      const today = getTestTodayString();
+      const messages = [
+        { role: 'assistant', content: 'Last week looked heavy on admin and move prep.' },
+        { role: 'user', content: 'This week I want to focus on the backend migration, and I keep deferring measurement-heavy experiments.' },
+      ] as const;
+
+      mockRunCodexStructuredTask
+        .mockResolvedValueOnce(JSON.stringify({
+          weeklyGoals: ['Ship Hopper-backed memory'],
+          days: [
+            {
+              date: today,
+              focus: 'Backend migration',
+              tasks: [
+                {
+                  text: 'Implement weekly review memory migration',
+                  thought_id: 1,
+                  completed: false,
+                },
+              ],
+            },
+          ],
+          unscheduled: ['Atlas follow-up'],
+          dropped: [],
+        }))
+        .mockResolvedValueOnce(JSON.stringify({
+          stateUpdates: [
+            {
+              key: 'work_preferences.max_daily_tasks',
+              value: 4,
+              confidence: 0.82,
+            },
+          ],
+          memoryCandidates: [
+            {
+              kind: 'completion_pattern',
+              normalizedKey: 'completion_pattern.defer_uncertain_experiments',
+              summary: 'Uncertain experiments with measurement overhead are often deferred.',
+              detailSummary: 'Measurement-heavy experimental work slips when backend work is the higher-leverage path.',
+              confidence: 0.76,
+              evidence: [
+                {
+                  sourceType: 'conversation',
+                  sourceRef: 'message:2',
+                  excerpt: 'I keep deferring measurement-heavy experiments.',
+                  weight: 0.8,
+                },
+              ],
+            },
+          ],
+          weeklyOutcome: {
+            notes: 'Planning stayed focused on one backend goal with experiments intentionally deferred.',
+          },
+        }));
+
+      const finalized = await generatePlan([...messages]);
+      updateProfileAfterReview([...messages], finalized.plan, finalized.reviewId);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const stateRows = db
+        .prepare('SELECT key, value_json FROM svc_weekly_review_profile_state ORDER BY key ASC')
+        .all() as Array<{ key: string; value_json: string }>;
+      expect(stateRows).toEqual(expect.arrayContaining([
+        {
+          key: 'completion_patterns.avg_weekly_completion',
+          value_json: '0.5',
+        },
+        {
+          key: 'work_preferences.max_daily_tasks',
+          value_json: '4',
+        },
+      ]));
+
+      const completionMemory = db
+        .prepare(`
+          SELECT normalized_key, summary, review_snapshot_id
+          FROM svc_weekly_review_memory_items
+          WHERE normalized_key = ?
+        `)
+        .get('completion_pattern.defer_uncertain_experiments') as
+          | { normalized_key: string; summary: string; review_snapshot_id: number }
+          | undefined;
+      expect(completionMemory).toEqual(expect.objectContaining({
+        normalized_key: 'completion_pattern.defer_uncertain_experiments',
+        summary: 'Uncertain experiments with measurement overhead are often deferred.',
+        review_snapshot_id: finalized.reviewId,
+      }));
+
+      const outcomeMemory = db
+        .prepare(`
+          SELECT summary
+          FROM svc_weekly_review_memory_items
+          WHERE kind = 'weekly_outcome' AND review_snapshot_id = ?
+        `)
+        .get(finalized.reviewId) as { summary: string } | undefined;
+      expect(outcomeMemory?.summary).toContain(finalized.plan.week);
+
+      const vectorCount = (
+        db.prepare('SELECT COUNT(*) AS count FROM svc_weekly_review_memory_vectors').get() as { count: number }
+      ).count;
+      expect(vectorCount).toBe(2);
+
+      const context = getWeeklyContext('experiment measurement backlog');
+      expect(context.profileStateSummary).toContain('Max daily tasks target: 4');
+      expect(context.relevantMemorySummary).toContain('Uncertain experiments with measurement overhead are often deferred.');
+      expect(context.recentOutcomeSummary).toContain(finalized.plan.week);
     });
   });
 });

@@ -51,6 +51,46 @@ export function initWeeklyReviewSchema(): void {
       plan_json TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS svc_weekly_review_profile_state (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0.5,
+      source_memory_id INTEGER REFERENCES svc_weekly_review_memory_items(id) ON DELETE SET NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS svc_weekly_review_memory_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      review_snapshot_id INTEGER REFERENCES svc_weekly_review_review_snapshots(id) ON DELETE SET NULL,
+      kind TEXT NOT NULL,
+      normalized_key TEXT,
+      summary TEXT NOT NULL,
+      detail_json TEXT NOT NULL DEFAULT '{}',
+      confidence REAL NOT NULL DEFAULT 0.5,
+      status TEXT NOT NULL DEFAULT 'active',
+      supersedes_memory_id INTEGER REFERENCES svc_weekly_review_memory_items(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS svc_weekly_review_memory_evidence (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      memory_id INTEGER NOT NULL REFERENCES svc_weekly_review_memory_items(id) ON DELETE CASCADE,
+      source_type TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      excerpt TEXT NOT NULL DEFAULT '',
+      weight REAL NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS svc_weekly_review_memory_vectors (
+      memory_id INTEGER PRIMARY KEY REFERENCES svc_weekly_review_memory_items(id) ON DELETE CASCADE,
+      vector_json TEXT NOT NULL,
+      search_text TEXT NOT NULL,
+      concepts_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_plan ON svc_weekly_review_tasks(plan_id);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_tasks_date ON svc_weekly_review_tasks(scheduled_date);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_deferred_plan ON svc_weekly_review_deferred(plan_id);
@@ -58,6 +98,15 @@ export function initWeeklyReviewSchema(): void {
       ON svc_weekly_review_review_snapshots(interviewed_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_svc_wr_snapshots_week
       ON svc_weekly_review_review_snapshots(week);
+    CREATE INDEX IF NOT EXISTS idx_svc_wr_memory_kind_status
+      ON svc_weekly_review_memory_items(kind, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_svc_wr_memory_review_snapshot
+      ON svc_weekly_review_memory_items(review_snapshot_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_svc_wr_memory_active_key
+      ON svc_weekly_review_memory_items(normalized_key)
+      WHERE status = 'active' AND normalized_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_svc_wr_memory_evidence_memory
+      ON svc_weekly_review_memory_evidence(memory_id);
     CREATE INDEX IF NOT EXISTS idx_svc_dc_thought ON svc_dashboard_completions(thought_id);
   `);
 }

@@ -4,6 +4,11 @@ import type { Thread, ThreadEvent } from '@openai/codex-sdk';
 import type { Response } from 'express';
 import { sessionManager, type SessionKind } from './sessionManager.js';
 
+type ModelReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+const DEFAULT_CODEX_MODEL = 'gpt-5.4';
+const DEFAULT_CODEX_REASONING_EFFORT: ModelReasoningEffort = 'high';
+
 interface StreamCodexTurnOptions {
   kind: SessionKind;
   sessionId?: string | null;
@@ -42,14 +47,37 @@ function getCodexClient(): Codex {
 }
 
 function getThreadOptions() {
+  const model = process.env.CODEX_MODEL?.trim() || DEFAULT_CODEX_MODEL;
+  const rawReasoningEffort = process.env.CODEX_REASONING_EFFORT?.toLowerCase();
+  const modelReasoningEffort: ModelReasoningEffort =
+    rawReasoningEffort === 'minimal' ||
+    rawReasoningEffort === 'low' ||
+    rawReasoningEffort === 'medium' ||
+    rawReasoningEffort === 'high' ||
+    rawReasoningEffort === 'xhigh'
+      ? rawReasoningEffort
+      : DEFAULT_CODEX_REASONING_EFFORT;
+
   return {
     workingDirectory: process.cwd(),
     skipGitRepoCheck: true,
     sandboxMode: 'read-only' as const,
     approvalPolicy: 'never' as const,
     networkAccessEnabled: false,
-    model: process.env.CODEX_MODEL || undefined,
+    model,
+    modelReasoningEffort,
   };
+}
+
+function logThreadConfig(
+  source: 'start' | 'resume' | 'task',
+  options: ReturnType<typeof getThreadOptions>,
+  kind?: SessionKind,
+): void {
+  const kindSuffix = kind ? ` kind=${kind}` : '';
+  console.info(
+    `[codex] source=${source}${kindSuffix} model=${options.model} reasoning=${options.modelReasoningEffort}`,
+  );
 }
 
 function getThreadState(kind: SessionKind, sessionId?: string | null): CodexThreadState {
@@ -58,16 +86,20 @@ function getThreadState(kind: SessionKind, sessionId?: string | null): CodexThre
   if (sessionId) {
     const record = sessionManager.get(sessionId, kind);
     if (record) {
+      const options = getThreadOptions();
+      logThreadConfig('resume', options, kind);
       return {
-        thread: client.resumeThread(record.threadId, getThreadOptions()),
+        thread: client.resumeThread(record.threadId, options),
         sessionId: record.id,
         resumed: true,
       };
     }
   }
 
+  const options = getThreadOptions();
+  logThreadConfig('start', options, kind);
   return {
-    thread: client.startThread(getThreadOptions()),
+    thread: client.startThread(options),
     sessionId: null,
     resumed: false,
   };
@@ -202,7 +234,9 @@ export async function streamCodexTurn({
 }
 
 export async function runCodexTextTask(prompt: string): Promise<string> {
-  const thread = getCodexClient().startThread(getThreadOptions());
+  const options = getThreadOptions();
+  logThreadConfig('task', options);
+  const thread = getCodexClient().startThread(options);
   const turn = await thread.run(prompt);
   return turn.finalResponse.trim();
 }
@@ -211,7 +245,9 @@ export async function runCodexStructuredTask<TSchema extends Record<string, unkn
   prompt: string,
   outputSchema: TSchema,
 ): Promise<string> {
-  const thread = getCodexClient().startThread(getThreadOptions());
+  const options = getThreadOptions();
+  logThreadConfig('task', options);
+  const thread = getCodexClient().startThread(options);
   const turn = await thread.run(prompt, { outputSchema });
   return turn.finalResponse.trim();
 }

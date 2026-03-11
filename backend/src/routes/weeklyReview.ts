@@ -144,7 +144,7 @@ router.post('/weekly-review/finalize', async (req: Request, res: Response, next:
     const plan = await generatePlan(messages);
     res.json({ success: true, data: plan });
     // Fire-and-forget: update learning profile in background
-    updateProfileAfterReview(messages, plan.plan);
+    updateProfileAfterReview(messages, plan.plan, plan.reviewId);
   } catch (err) {
     next(err);
   }
