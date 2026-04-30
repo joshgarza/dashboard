@@ -10,6 +10,7 @@ import { researchRouter } from './routes/research.js';
 import { weeklyReviewRouter } from './routes/weeklyReview.js';
 import { leadGenSourcesRouter } from './routes/leadGenSources.js';
 import { todosRouter } from './routes/todos.js';
+import { servicesRouter } from './routes/services.js';
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.use('/api', researchRouter);
 app.use('/api', weeklyReviewRouter);
 app.use('/api', leadGenSourcesRouter);
 app.use('/api', todosRouter);
+app.use('/api', servicesRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

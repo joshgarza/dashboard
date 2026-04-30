@@ -11,6 +11,7 @@ import { TodayTodos } from '@/modules/TodayTodos';
 import { TodaySchedule } from '@/modules/TodaySchedule';
 import { ResearchChat } from '@/modules/ResearchChat';
 import { WeeklyReview } from '@/modules/WeeklyReview';
+import { Services } from '@/modules/Services';
 import type { DashboardModule } from '@/types/module';
 
 const modules: DashboardModule[] = [
@@ -31,6 +32,12 @@ const modules: DashboardModule[] = [
     title: "Today's Plan",
     component: TodayTodos,
     refreshInterval: 60000,
+  },
+  {
+    id: 'services',
+    title: 'Services',
+    component: Services,
+    refreshInterval: 15000,
   },
   {
     id: 'lead-gen-sources',
